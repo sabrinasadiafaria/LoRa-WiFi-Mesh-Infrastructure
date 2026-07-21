@@ -83,7 +83,7 @@ Use this document to verify your wiring connections for each node while assembli
 | MOSI | D7 | GPIO 13 | SPI Master Out Slave In |
 | NSS / CS | D8 | GPIO 15 | SPI Chip Select |
 | RST | D0 | GPIO 16 | Reset |
-| DIO0 | D2 | GPIO 4 | Interrupt Pin |
+| DIO0 | D3 | GPIO 0 | Interrupt Pin |
 
 | 0.96" OLED Pin | ESP8266 Label | GPIO Pin | Description |
 | :--- | :--- | :--- | :--- |
