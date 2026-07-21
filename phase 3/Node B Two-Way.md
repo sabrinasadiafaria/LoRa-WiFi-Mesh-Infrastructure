@@ -1,8 +1,3 @@
-# Node B - Phase 3 (Two-Way Communication)
-
-This code enables **Node B** to both send and receive LoRa packets non-blockingly. It will send a message every 5 seconds and continuously listen for incoming messages from Node A.
-
-```cpp
 #include <SPI.h>
 #include <LoRa.h>
 #include <Wire.h>
@@ -25,10 +20,33 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 int txCounter = 0;
 unsigned long lastSendTime = 0;
-const int sendInterval = 6000; // Send every 6 seconds (offset from Node A to reduce collision)
+const int sendInterval = 6000; // Send every 6 seconds
 
-String lastReceived = "";
+String lastReceived = "None";
 int lastRssi = 0;
+
+void updateOLED(String rxMsg, int rssi) {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+
+  display.setCursor(0, 0);
+  display.println("NODE B (Two-Way)");
+
+  display.setCursor(0, 18);
+  display.print("RX:");
+  display.setCursor(25, 18);
+  display.println(rxMsg);
+
+  if (rssi != 0) {
+    display.setCursor(0, 40);
+    display.print("RSSI:");
+    display.setCursor(35, 40);
+    display.println(rssi);
+  }
+
+  display.display();
+}
 
 void setup() {
   Serial.begin(115200);
@@ -80,27 +98,3 @@ void loop() {
     lastSendTime = millis();
   }
 }
-
-void updateOLED(String rxMsg, int rssi) {
-  display.clearDisplay();
-  display.setTextColor(SSD1306_WHITE);
-  display.setTextSize(1);
-
-  display.setCursor(0, 0);
-  display.println("NODE B (Two-Way)");
-
-  display.setCursor(0, 18);
-  display.print("RX:");
-  display.setCursor(25, 18);
-  display.println(rxMsg);
-
-  if (rssi != 0) {
-    display.setCursor(0, 40);
-    display.print("RSSI:");
-    display.setCursor(35, 40);
-    display.println(rssi);
-  }
-
-  display.display();
-}
-```

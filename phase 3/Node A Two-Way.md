@@ -1,8 +1,3 @@
-# Node A - Phase 3 (Two-Way Communication)
-
-This code enables **Node A** to both send and receive LoRa packets non-blockingly. It will send a message every 5 seconds and continuously listen for incoming messages from Node B.
-
-```cpp
 #include <SPI.h>
 #include <LoRa.h>
 #include <Wire.h>
@@ -23,8 +18,27 @@ int txCounter = 0;
 unsigned long lastSendTime = 0;
 const int sendInterval = 5000; // Send every 5 seconds
 
-String lastReceived = "";
+String lastReceived = "None";
 int lastRssi = 0;
+
+void updateOLED(String rxMsg, int rssi) {
+  display.clearBuffer();
+  display.setFont(u8g2_font_ncenB08_tr);
+
+  display.drawStr(0, 12, "NODE A (Two-Way)");
+  
+  display.drawStr(0, 30, "Last RX:");
+  display.setCursor(0, 44);
+  display.print(rxMsg);
+  
+  if (rssi != 0) {
+    display.setCursor(0, 58);
+    display.print("RSSI: ");
+    display.print(rssi);
+  }
+  
+  display.sendBuffer();
+}
 
 void setup() {
   Serial.begin(115200);
@@ -76,23 +90,3 @@ void loop() {
     lastSendTime = millis();
   }
 }
-
-void updateOLED(String rxMsg, int rssi) {
-  display.clearBuffer();
-  display.setFont(u8g2_font_ncenB08_tr);
-
-  display.drawStr(0, 12, "NODE A (Two-Way)");
-  
-  display.drawStr(0, 32, "Last RX:");
-  display.setCursor(0, 48);
-  display.print(rxMsg);
-  
-  if (rssi != 0) {
-    display.setCursor(0, 64);
-    display.print("RSSI: ");
-    display.print(rssi);
-  }
-  
-  display.sendBuffer();
-}
-```
