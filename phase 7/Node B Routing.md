@@ -38,12 +38,16 @@ int routeCount = 0;
 unsigned long lastBroadcastTime = 2500; // Offset start by 2.5s to avoid collision with Node A
 
 void updateOrAddRoute(String dest, String nextHop, int hops, int rssi) {
+  // RULE 1: Never add a route to yourself
+  if (dest == MY_NODE_ID) return;
+
   unsigned long now = millis();
 
-  // Search if route already exists
+  // Search if route to dest already exists
   for (int i = 0; i < routeCount; i++) {
     if (routingTable[i].destNode == dest) {
-      if (hops <= routingTable[i].hops || !routingTable[i].valid) {
+      // Update if advertisement comes from current nextHop, OR offers a strictly shorter path
+      if (nextHop == routingTable[i].nextHop || hops < routingTable[i].hops || !routingTable[i].valid) {
         routingTable[i].nextHop = nextHop;
         routingTable[i].hops = hops;
         routingTable[i].rssi = rssi;
@@ -54,7 +58,7 @@ void updateOrAddRoute(String dest, String nextHop, int hops, int rssi) {
     }
   }
 
-  // Add new route if table has space
+  // Add new route if destination not in table
   if (routeCount < MAX_ROUTES) {
     routingTable[routeCount].destNode = dest;
     routingTable[routeCount].nextHop = nextHop;
@@ -139,13 +143,10 @@ void updateOLED() {
 void broadcastRoutes() {
   // Format: RT:SENDER_ID:DEST1,HOPS1;DEST2,HOPS2...
   String packetStr = "RT:" + MY_NODE_ID + ":";
-  
-  // Include self (0 hops)
-  packetStr += MY_NODE_ID + ",0;";
 
-  // Include valid learned routes
+  // Include valid learned routes (excluding self)
   for (int i = 0; i < routeCount; i++) {
-    if (routingTable[i].valid) {
+    if (routingTable[i].valid && routingTable[i].destNode != MY_NODE_ID) {
       packetStr += routingTable[i].destNode + "," + String(routingTable[i].hops) + ";";
     }
   }
@@ -195,7 +196,7 @@ void loop() {
         String routesPayload = incoming.substring(secondColon + 1);
 
         if (senderId != MY_NODE_ID) {
-          // Direct neighbor route
+          // Direct neighbor route (1 hop)
           updateOrAddRoute(senderId, senderId, 1, rssi);
 
           // Parse advertised multi-hop routes
