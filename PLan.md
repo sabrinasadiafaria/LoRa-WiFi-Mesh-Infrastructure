@@ -53,35 +53,37 @@ Bi-directional Communication
 
 --------------------------------------------------
 
-PHASE 4 — Reliable Communication 🔄
+PHASE 4 — Reliable Communication ✅
 
-Goal
-Guarantee delivery with ACKs & Retries.
+(Currently completed)
 
 Features
 - Packet format: MSG:ID:Payload / ACK:ID
 - Automatic ACK replies upon packet receipt
 - Duplicate packet detection & filtering
-- Retry logic: If no ACK received within 1.5s, retry up to 3 times
-- Failure detection: If 3 retries fail, report "ACK FAILED!"
+- Retry logic with 100ms ACK delay and randomized backoff jitter
+- Verified delivery confirmation & timeout alert
 
 Deliverable
 Reliable Messaging Layer
 
 --------------------------------------------------
 
-PHASE 5 — Heartbeat System
+PHASE 5 — Heartbeat System 🔄
 
 Goal
-Know which nodes are alive.
+Know which nodes are alive in real-time.
 
-Every node broadcasts ONLINE every 5 seconds.
+Every node broadcasts heartbeat every 5 seconds.
 
 Features
-Heartbeat
-Node Timeout
-Last Seen
-Connection Status
+- Periodic Heartbeat Broadcast (`HB:NODE_ID:UPTIME`)
+- Target Node Online/Offline State Tracking
+- Timeout Detection (12 seconds threshold)
+- OLED display live update:
+  NODE_B: ONLINE
+  Last Seen: 2s ago
+  RSSI: -32 dBm
 
 Deliverable
 Network Health Monitoring

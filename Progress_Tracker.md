@@ -4,28 +4,23 @@ Use this document to track your progress as you test each phase of the project.
 
 ---
 
-## 🟢 Phase 3: Two-Way Communication (Completed ✅)
+## 🟢 Phase 4: Reliable Communication (ACKs & Retries) (Completed ✅)
 
-- [x] Node A powers on successfully.
-- [x] Node A OLED initializes and displays "NODE A (Two-Way)".
-- [x] Node A successfully initializes the LoRa module.
-- [x] Node B powers on successfully.
-- [x] Node B OLED initializes and displays "NODE B (Two-Way)".
-- [x] Node B successfully initializes the LoRa module.
-- [x] Node A successfully transmits a packet every 5 seconds.
-- [x] Node B successfully receives the packet from Node A and updates its OLED.
-- [x] Node B successfully transmits a packet every 6 seconds.
-- [x] Node A successfully receives the packet from Node B and updates its OLED.
-- [x] RSSI values are displayed correctly on both OLEDs.
+- [x] Node A transmits message formatted as `MSG:ID:DATA`.
+- [x] Node B receives message and automatically replies with `ACK:ID`.
+- [x] Node A receives `ACK` and displays "ACK Received!" on OLED and Serial.
+- [x] Test disconnect: ACK timeouts and retries work cleanly.
+- [x] Duplicate detection: Verified duplicate IDs are not re-processed.
 
 ---
 
-## 📈 Phase 4: Reliable Communication (ACK & Retries)
+## 📈 Phase 5: Heartbeat System Tracker
 
-Check these off as you test Phase 4:
+Check these off as you test Phase 5:
 
-- [ ] Node A transmits message formatted as `MSG:ID:DATA`.
-- [ ] Node B receives message and automatically replies with `ACK:ID`.
-- [ ] Node A receives `ACK` and displays "ACK Received!" on OLED and Serial.
-- [ ] Test disconnect (power off Node B): Node A should retry up to 3 times before displaying "ACK FAILED!".
-- [ ] Duplicate detection: Verify duplicate IDs are not re-processed on OLED.
+- [ ] Node A broadcasts heartbeat `HB:NODE_A:uptime` every 5 seconds.
+- [ ] Node B broadcasts heartbeat `HB:NODE_B:uptime` every 5 seconds.
+- [ ] Node A receives Node B's heartbeat and displays `NODE_B: ONLINE` and `Last Seen: X sec ago` on OLED.
+- [ ] Node B receives Node A's heartbeat and displays `NODE_A: ONLINE` and `Last Seen: X sec ago` on OLED.
+- [ ] Test disconnect (unplug Node B): After 12 seconds of missing heartbeats, Node A updates OLED to `NODE_B: OFFLINE` and alerts `TIMEOUT!`.
+- [ ] Reconnect test: Plug Node B back in, Node A should automatically return to `NODE_B: ONLINE`.
