@@ -9,15 +9,21 @@
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-// Define LoRa pins (Adjust these for your Node C board)
-// For standard ESP32: SCK 18, MISO 19, MOSI 23, SS 5, RST 14, DIO0 26
-// For ESP8266 NodeMCU: SCK D5 (14), MISO D6 (12), MOSI D7 (13), SS D8 (15), RST D0 (16), DIO0 D3 (0)
-#define LORA_SCK   18
-#define LORA_MISO  19
-#define LORA_MOSI  23
-#define LORA_SS    5
-#define LORA_RST   14
-#define LORA_DIO0  26
+// Automatic Hardware Pin Configuration (Supports both ESP8266 and ESP32)
+#ifdef ESP8266
+  // ESP8266 NodeMCU Pins: SPI SCK=D5(14), MISO=D6(12), MOSI=D7(13)
+  #define LORA_SS    15 // Pin D8
+  #define LORA_RST   16 // Pin D0
+  #define LORA_DIO0  0  // Pin D3
+#else
+  // Standard ESP32 Pins
+  #define LORA_SCK   18
+  #define LORA_MISO  19
+  #define LORA_MOSI  23
+  #define LORA_SS    5
+  #define LORA_RST   14
+  #define LORA_DIO0  26
+#endif
 
 #define LORA_FREQ 433E6
 
@@ -138,11 +144,16 @@ void forwardPacket(String src, String dest, int hops, int msgId, String payload)
 void setup() {
   Serial.begin(115200);
 
-  // Default I2C SDA=21, SCL=22 for ESP32 (or D2=4, D1=5 for ESP8266)
-  Wire.begin(21, 22);
+#ifdef ESP8266
+  Wire.begin(4, 5); // SDA = D2 (GPIO 4), SCL = D1 (GPIO 5) on ESP8266
+  SPI.begin();       // ESP8266 SPI.begin() takes 0 arguments
+#else
+  Wire.begin(21, 22); // ESP32 pins
+  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
+#endif
+
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
 
-  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
 
   if (!LoRa.begin(LORA_FREQ)) {
