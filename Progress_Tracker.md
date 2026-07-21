@@ -4,22 +4,26 @@ Use this document to track your progress as you test each phase of the project.
 
 ---
 
-## 🟢 Phase 5: Heartbeat System (Completed ✅)
+## 🟢 Phase 6: Automatic Neighbor Discovery (Completed ✅)
 
-- [x] Node A broadcasts heartbeat `HB:NODE_A:uptime` every 5 seconds.
-- [x] Node B broadcasts heartbeat `HB:NODE_B:uptime` every 5 seconds.
-- [x] Node A receives Node B's heartbeat and displays `NODE_B: ONLINE` and `Last Seen: X sec ago` on OLED.
-- [x] Node B receives Node A's heartbeat and displays `NODE_A: ONLINE` and `Last Seen: X sec ago` on OLED.
-- [x] Verified zero collision and stable heartbeat exchanges.
+- [x] Node A dynamically discovers Node B and prints `>>> NEW NEIGHBOR DISCOVERED: NODE_B`.
+- [x] Node B dynamically discovers Node A and prints `>>> NEW NEIGHBOR DISCOVERED: NODE_A`.
+- [x] Neighbor Table tracks active count, last seen timestamps, and RSSI.
+- [x] Disconnect & Reconnect handling verified.
 
 ---
 
-## 📈 Phase 6: Automatic Neighbor Discovery Tracker
+## 📈 Phase 7: Dynamic Routing Table Tracker
 
-Check these off as you test Phase 6:
+Check these off as you test Phase 7:
 
-- [ ] Node A dynamically discovers Node B and prints `>>> NEW NEIGHBOR DISCOVERED: NODE_B`.
-- [ ] Node B dynamically discovers Node A and prints `>>> NEW NEIGHBOR DISCOVERED: NODE_A`.
-- [ ] Neighbor Table tracks active count, last seen timestamps, and RSSI for each discovered node.
-- [ ] Test disconnect (power off Node B): Node A logs `>>> ALERT: Neighbor Lost (Timeout): NODE_B` after 12s.
-- [ ] Test reconnect: Node A logs `>>> RECONNECTED Neighbor: NODE_B` when Node B powers back on.
+- [ ] Node A broadcasts route vector `RT:NODE_A:NODE_A,0;...`.
+- [ ] Node B broadcasts route vector `RT:NODE_B:NODE_B,0;...`.
+- [ ] Both nodes build dynamic routing tables and print them cleanly to Serial Monitor:
+  ```text
+  ========== ROUTING TABLE (NODE_A) ==========
+  DEST        NEXT_HOP    HOPS   RSSI    STATUS
+  NODE_B      NODE_B      1      -32dBm  ACTIVE
+  ```
+- [ ] OLED renders current active route count, destination, next hop, and distance in hops.
+- [ ] Test disconnect (power off Node B): Route entry expires after 15s (`>>> ALERT: Route Expired for Dest: NODE_B`).

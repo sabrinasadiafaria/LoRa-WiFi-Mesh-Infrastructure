@@ -77,20 +77,16 @@ Features
 - Periodic Heartbeat Broadcast (`HB:NODE_ID:UPTIME`)
 - Target Node Online/Offline State Tracking
 - Timeout Detection (12 seconds threshold)
-- OLED display live update:
-  NODE_B: ONLINE
-  Last Seen: 2s ago
-  RSSI: -34 dBm
+- OLED display live update
 
 Deliverable
 Network Health Monitoring
 
 --------------------------------------------------
 
-PHASE 6 — Node Discovery 🔄
+PHASE 6 — Node Discovery ✅
 
-Goal
-Automatically discover nearby nodes without hardcoding node IDs.
+(Currently completed)
 
 Features
 - Dynamic Neighbor Table array (`struct Neighbor`)
@@ -105,10 +101,19 @@ Automatic Neighbor Discovery
 
 --------------------------------------------------
 
-PHASE 7 — Routing Table
+PHASE 7 — Routing Table 🔄
 
 Goal
-Learn multi-hop routes.
+Learn multi-hop routes across the mesh network using Distance-Vector routing.
+
+Features
+- Distance-Vector Route Advertisement (`RT:SENDER:DEST1,HOPS1;...`)
+- Routing Table array (`struct RouteEntry`)
+- Automatic shortest path selection (prefer lower hop count)
+- Prevent routing loops (ignore routes back to self)
+- Route expiration / timeout after 15 seconds
+- Formatted Serial Monitor Routing Table printout
+- OLED display showing active routes, next hop, and distance in hops
 
 Deliverable
 Dynamic Routing Table
