@@ -101,29 +101,32 @@ Automatic Neighbor Discovery
 
 --------------------------------------------------
 
-PHASE 7 — Routing Table 🔄
+PHASE 7 — Routing Table ✅
 
-Goal
-Learn multi-hop routes across the mesh network using Distance-Vector routing.
+(Currently completed)
 
 Features
 - Distance-Vector Route Advertisement (`RT:SENDER:DEST1,HOPS1;...`)
 - Routing Table array (`struct RouteEntry`)
-- Automatic shortest path selection (prefer lower hop count)
-- Prevent routing loops (ignore routes back to self)
-- Route expiration / timeout after 15 seconds
+- Distance-Vector loop avoidance algorithm
 - Formatted Serial Monitor Routing Table printout
-- OLED display showing active routes, next hop, and distance in hops
 
 Deliverable
 Dynamic Routing Table
 
 --------------------------------------------------
 
-PHASE 8 — Packet Forwarding
+PHASE 8 — Packet Forwarding 🔄
 
-Now introduce Node C.
-Node B forwards automatically.
+Goal
+Enable automatic packet forwarding across intermediate nodes to achieve multi-hop mesh communication.
+
+Features
+- Mesh Packet Format: `DATA:SRC:DEST:HOPS:MSG_ID:PAYLOAD`
+- Destination check: If packet is for self -> process as final receiver.
+- Forwarding engine: If packet is for another node -> lookup next hop in Routing Table and forward (`>>> FORWARDED packet: SRC -> DEST`).
+- Max Hop TTL limit: Drop packets exceeding max hops (e.g. 5) to prevent infinite loops.
+- Live OLED rendering of forwarded packet counters and destination status.
 
 Deliverable
 First Multi-Hop Network

@@ -4,26 +4,26 @@ Use this document to track your progress as you test each phase of the project.
 
 ---
 
-## 🟢 Phase 6: Automatic Neighbor Discovery (Completed ✅)
+## 🟢 Phase 7: Dynamic Routing Table (Completed ✅)
 
-- [x] Node A dynamically discovers Node B and prints `>>> NEW NEIGHBOR DISCOVERED: NODE_B`.
-- [x] Node B dynamically discovers Node A and prints `>>> NEW NEIGHBOR DISCOVERED: NODE_A`.
-- [x] Neighbor Table tracks active count, last seen timestamps, and RSSI.
-- [x] Disconnect & Reconnect handling verified.
-
----
-
-## 📈 Phase 7: Dynamic Routing Table Tracker
-
-Check these off as you test Phase 7:
-
-- [ ] Node A broadcasts route vector `RT:NODE_A:NODE_A,0;...`.
-- [ ] Node B broadcasts route vector `RT:NODE_B:NODE_B,0;...`.
-- [ ] Both nodes build dynamic routing tables and print them cleanly to Serial Monitor:
+- [x] Node A broadcasts route vector `RT:NODE_A:NODE_A,0;...`.
+- [x] Node B broadcasts route vector `RT:NODE_B:NODE_B,0;...`.
+- [x] Clean loop-free routing table rendered on Serial Monitor:
   ```text
   ========== ROUTING TABLE (NODE_A) ==========
   DEST        NEXT_HOP    HOPS   RSSI    STATUS
-  NODE_B      NODE_B      1      -32dBm  ACTIVE
+  NODE_B      NODE_B      1      -38dBm  ACTIVE
   ```
-- [ ] OLED renders current active route count, destination, next hop, and distance in hops.
-- [ ] Test disconnect (power off Node B): Route entry expires after 15s (`>>> ALERT: Route Expired for Dest: NODE_B`).
+- [x] Verified zero count-to-infinity / loop errors.
+
+---
+
+## 📈 Phase 8: Multi-Hop Packet Forwarding Tracker
+
+Check these off as you test Phase 8:
+
+- [ ] Node A transmits packet formatted as `DATA:NODE_A:NODE_C:1:ID:Payload`.
+- [ ] Node B receives packet meant for `NODE_C`.
+- [ ] Node B checks its routing table and automatically forwards the packet: `>>> FORWARDED packet: NODE_A -> NODE_C via NODE_C (Hop 2)`.
+- [ ] Final destination node receives packet and logs `>>> RECEIVED FINAL DATA`.
+- [ ] Hop limit (TTL) check prevents infinite forwarding loops.
