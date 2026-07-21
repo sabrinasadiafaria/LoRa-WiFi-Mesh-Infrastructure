@@ -15,9 +15,9 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 #define LORA_FREQ 433E6
 
 // Protocol configuration
-const int ACK_TIMEOUT = 1500;   // Wait 1.5s for ACK
-const int MAX_RETRIES = 3;      // Retry up to 3 times
-const int SEND_INTERVAL = 7000; // Trigger new send every 7 seconds
+const int ACK_TIMEOUT_BASE = 2000; // Base wait 2.0s for ACK
+const int MAX_RETRIES = 3;         // Retry up to 3 times
+const int SEND_INTERVAL_BASE = 10000; // New send every ~10s
 
 int msgCounter = 1;
 unsigned long lastSendTime = 0;
@@ -27,6 +27,7 @@ bool waitingForAck = false;
 int currentMsgId = 0;
 String currentPayload = "";
 unsigned long ackTimer = 0;
+int currentAckTimeout = 2000;
 int retryCount = 0;
 String ackStatusStr = "Idle";
 
@@ -66,6 +67,7 @@ void sendPacket(String type, int id, String payload) {
 
 void setup() {
   Serial.begin(115200);
+  randomSeed(analogRead(34)); // Seed random generator for backoff jitter
 
   Wire.begin(21, 22);
   display.begin();
@@ -105,7 +107,8 @@ void loop() {
 
         Serial.println("RX MSG ID#" + String(id) + ": " + payload + " [RSSI: " + String(rssi) + "]");
 
-        // Send ACK back immediately
+        // Small 100ms delay to allow sender radio to settle into RX mode before replying ACK
+        delay(100);
         sendPacket("ACK", id, "OK");
 
         // Process message if not duplicate
@@ -130,11 +133,13 @@ void loop() {
     }
   }
 
-  // 2. Retry Logic on ACK Timeout
-  if (waitingForAck && (millis() - ackTimer > ACK_TIMEOUT)) {
+  // 2. Retry Logic on ACK Timeout with Random Backoff Jitter
+  if (waitingForAck && (millis() - ackTimer > currentAckTimeout)) {
     if (retryCount < MAX_RETRIES) {
       retryCount++;
       ackTimer = millis();
+      // Add random 200-800ms jitter to prevent collision loops
+      currentAckTimeout = ACK_TIMEOUT_BASE + random(200, 800);
       ackStatusStr = "Retry " + String(retryCount) + "/" + String(MAX_RETRIES);
       Serial.println(">>> ACK Timeout! Retrying ID#" + String(currentMsgId) + " (" + String(retryCount) + "/" + String(MAX_RETRIES) + ")");
       sendPacket("MSG", currentMsgId, currentPayload);
@@ -147,13 +152,14 @@ void loop() {
     }
   }
 
-  // 3. Initiate Periodic Send when not waiting for ACK
-  if (!waitingForAck && (millis() - lastSendTime > SEND_INTERVAL)) {
+  // 3. Initiate Periodic Send when not waiting for ACK (Interval with random jitter)
+  if (!waitingForAck && (millis() - lastSendTime > (SEND_INTERVAL_BASE + random(0, 3000)))) {
     currentMsgId = msgCounter++;
     currentPayload = "DataA #" + String(currentMsgId);
     waitingForAck = true;
     retryCount = 0;
     ackTimer = millis();
+    currentAckTimeout = ACK_TIMEOUT_BASE + random(0, 500);
     ackStatusStr = "Waiting ACK";
 
     Serial.println(">>> Initiating TX ID#" + String(currentMsgId));
