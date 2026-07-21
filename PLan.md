@@ -69,12 +69,9 @@ Reliable Messaging Layer
 
 --------------------------------------------------
 
-PHASE 5 — Heartbeat System 🔄
+PHASE 5 — Heartbeat System ✅
 
-Goal
-Know which nodes are alive in real-time.
-
-Every node broadcasts heartbeat every 5 seconds.
+(Currently completed)
 
 Features
 - Periodic Heartbeat Broadcast (`HB:NODE_ID:UPTIME`)
@@ -83,19 +80,25 @@ Features
 - OLED display live update:
   NODE_B: ONLINE
   Last Seen: 2s ago
-  RSSI: -32 dBm
+  RSSI: -34 dBm
 
 Deliverable
 Network Health Monitoring
 
 --------------------------------------------------
 
-PHASE 6 — Node Discovery
+PHASE 6 — Node Discovery 🔄
 
 Goal
-Automatically discover nearby nodes.
+Automatically discover nearby nodes without hardcoding node IDs.
 
-Each node maintains Neighbor Table.
+Features
+- Dynamic Neighbor Table array (`struct Neighbor`)
+- Auto-discovery on incoming heartbeat packets
+- Automatic neighbor list expansion (`NEW NEIGHBOR DISCOVERED`)
+- Active/Inactive status management & Timeout pruning (`Neighbor Lost`)
+- Reconnection detection (`RECONNECTED`)
+- Live OLED rendering of active neighbors & RSSI
 
 Deliverable
 Automatic Neighbor Discovery
@@ -105,7 +108,7 @@ Automatic Neighbor Discovery
 PHASE 7 — Routing Table
 
 Goal
-Learn routes.
+Learn multi-hop routes.
 
 Deliverable
 Dynamic Routing Table
