@@ -131,27 +131,32 @@ First Multi-Hop Network
 
 --------------------------------------------------
 
-PHASE 9 — Self-Healing Mesh 🔄
+PHASE 9 — Self-Healing Mesh ✅
 
-Goal
-Demonstrate dynamic self-healing network rerouting when intermediate nodes fail or disappear.
+(Currently completed)
 
 Features
 - Active Link Health & Timeout Detection (12s threshold)
 - Automatic invalidation of dead routes (`ALERT [SELF-HEALING]: Node NODE_B failed!`)
 - Dynamic Failover / Re-routing (`>>> SELF-HEALED FORWARD`)
 - Automatic Route Recovery upon node reconnection (`>>> RECOVERED ROUTE`)
-- OLED display live alert of network partition & self-heal events
+- Live OLED startup diagnostics on all 3 nodes
 
 Deliverable
 Self-Healing Routing
 
 --------------------------------------------------
 
-PHASE 10 — GPS Integration
+PHASE 10 — GPS Integration 🔄
 
-Every node has GPS.
-Each heartbeat includes Node ID, Latitude, Longitude, Battery.
+Goal
+Every node parses real GPS (or simulated backup GPS) and broadcasts telemetry packets across the mesh.
+
+Features
+- Hardware Serial GPS Parsing (Neo-6M support via Serial2)
+- Telemetry Packet Format: `GPS:SENDER_ID:LAT:LON:BAT:UPTIME`
+- Bench test simulated GPS drift fallback (`GPS: SIM` vs `GPS: FIX`)
+- Live OLED telemetry rendering (Latitude, Longitude, Battery %)
 
 Deliverable
 Real-Time Node Tracking

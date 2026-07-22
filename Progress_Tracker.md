@@ -4,23 +4,22 @@ Use this document to track your progress as you test each phase of the project.
 
 ---
 
-## 🟢 Phase 8: Multi-Hop Packet Forwarding (Completed ✅)
+## 🟢 Phase 9: Self-Healing Mesh Network (Completed ✅)
 
-- [x] Node A transmits packet formatted as `DATA:NODE_A:NODE_C:1:ID:Payload`.
-- [x] Node B receives packet meant for `NODE_C`.
-- [x] Node B checks its routing table and automatically forwards the packet.
-- [x] Final destination node receives packet and logs `>>> RECEIVED FINAL DATA`.
-- [x] Verified Hop limit (TTL) check.
+- [x] Node A, Node B, and Node C running self-healing firmware.
+- [x] Verified route timeout detection (12 seconds threshold).
+- [x] Simulated intermediate node failure by turning off Node B.
+- [x] Observed automatic route invalidation and dynamic re-routing (`A -> C`).
+- [x] Verified automatic route recovery upon re-powering Node B.
 
 ---
 
-## 📈 Phase 9: Self-Healing Mesh Network Tracker
+## 📈 Phase 10: GPS Integration Tracker
 
-Check these off as you test Phase 9:
+Check these off as you test Phase 10:
 
-- [ ] Upload Phase 9 code to Node A, Node B, and Node C.
-- [ ] Verify 3-node mesh topology: Node A communicates with Node C through Node B (`A -> B -> C`).
-- [ ] **Simulate Node Failure Test**: Power OFF Node B (unplug USB/power).
-- [ ] Observe Node A & Node C detect route timeout after 12s (`>>> ALERT [SELF-HEALING]: Node NODE_B failed! Invalidating route`).
-- [ ] If Node A and Node C move within direct range, verify the network **self-heals** by establishing a direct link (`A -> C`, 1 Hop) automatically!
-- [ ] Plug Node B back in: Verify network automatically re-discovers Node B and recovers 3-node mesh topology (`>>> RECOVERED ROUTE`).
+- [ ] Upload Phase 10 GPS sketch to Node A, Node B, and Node C.
+- [ ] Verify OLED renders real-time Latitude, Longitude, and Battery percentage (`Bat: 98% | GPS: SIM`).
+- [ ] Observe periodic telemetry broadcasting across LoRa mesh (`GPS:NODE_A:23.797810:90.449720:98:120`).
+- [ ] Verify receiving nodes log incoming telemetry with RSSI values in Serial Monitor (`RX Telemetry [RSSI -45dBm]`).
+- [ ] Connect physical Neo-6M GPS module to Serial2 (RX=Pin 16, TX=Pin 17 on ESP32) for live satellite fix!
