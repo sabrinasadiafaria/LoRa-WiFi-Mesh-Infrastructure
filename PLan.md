@@ -147,28 +147,34 @@ Self-Healing Routing
 
 --------------------------------------------------
 
-PHASE 10 — GPS Integration 🔄
+PHASE 10 — GPS Integration ✅
 
-Goal
-Every node parses real GPS (or simulated backup GPS) and broadcasts telemetry packets across the mesh.
+(Currently completed)
 
 Features
-- Hardware Serial GPS Parsing (Neo-6M support via Serial2)
+- Hardware Serial NMEA GPS parsing (Neo-6M support via Serial2)
 - Telemetry Packet Format: `GPS:SENDER_ID:LAT:LON:BAT:UPTIME`
-- Bench test simulated GPS drift fallback (`GPS: SIM` vs `GPS: FIX`)
-- Live OLED telemetry rendering (Latitude, Longitude, Battery %)
+- Bench test indoor fallback mode (`GPS: SIM/INDOOR`)
+- Live OLED telemetry rendering (Latitude, Longitude, Satellite count, Battery %)
 
 Deliverable
 Real-Time Node Tracking
 
 --------------------------------------------------
 
-PHASE 11 — Rescue Messaging
+PHASE 11 — Rescue Messaging & SOS System 🔄
 
-TEXT MESSAGE: Node → Node, Central → Node, SOS.
+Goal
+Field rescuers transmit directed text messages and trigger instant broadcast SOS Emergency Alerts across the LoRa mesh network.
+
+Features
+- Directed Rescue Text Messages (`TEXT:SRC:DEST:MSG_ID:Text Message`)
+- Hardware SOS Emergency Trigger (Press ESP32 BOOT button GPIO 0)
+- Urgent SOS Broadcast Packet (`SOS:SRC:LAT:LON:MAYDAY`)
+- Full-Screen OLED **`🚨 SOS EMERGENCY ALERT 🚨`** display takeover showing victim Node ID and GPS location
 
 Deliverable
-Field Communication System
+Field Communication & SOS System
 
 --------------------------------------------------
 

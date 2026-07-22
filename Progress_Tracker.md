@@ -4,22 +4,21 @@ Use this document to track your progress as you test each phase of the project.
 
 ---
 
-## 🟢 Phase 9: Self-Healing Mesh Network (Completed ✅)
+## 🟢 Phase 10: Real-Time GPS Tracking & Telemetry (Completed ✅)
 
-- [x] Node A, Node B, and Node C running self-healing firmware.
-- [x] Verified route timeout detection (12 seconds threshold).
-- [x] Simulated intermediate node failure by turning off Node B.
-- [x] Observed automatic route invalidation and dynamic re-routing (`A -> C`).
-- [x] Verified automatic route recovery upon re-powering Node B.
+- [x] Hardware Serial NMEA GPS parsing configured for Node A (`Serial2` RX=16, TX=17).
+- [x] Telemetry broadcasting format: `GPS:SENDER_ID:LAT:LON:BAT:UPTIME`.
+- [x] Live OLED rendering of Latitude, Longitude, Satellite Count, and Battery %.
+- [x] Bench-test indoor fallback mode (`GPS: SIM/INDOOR`).
 
 ---
 
-## 📈 Phase 10: GPS Integration Tracker
+## 📈 Phase 11: Rescue Messaging & SOS Alert System Tracker
 
-Check these off as you test Phase 10:
+Check these off as you test Phase 11:
 
-- [ ] Upload Phase 10 GPS sketch to Node A, Node B, and Node C.
-- [ ] Verify OLED renders real-time Latitude, Longitude, and Battery percentage (`Bat: 98% | GPS: SIM`).
-- [ ] Observe periodic telemetry broadcasting across LoRa mesh (`GPS:NODE_A:23.797810:90.449720:98:120`).
-- [ ] Verify receiving nodes log incoming telemetry with RSSI values in Serial Monitor (`RX Telemetry [RSSI -45dBm]`).
-- [ ] Connect physical Neo-6M GPS module to Serial2 (RX=Pin 16, TX=Pin 17 on ESP32) for live satellite fix!
+- [ ] Upload Phase 11 Rescue Messaging sketch to Node A, Node B, and Node C.
+- [ ] Observe targeted text messaging across LoRa mesh (`TEXT:NODE_A:NODE_C:1:Survivor Found Sector 4`).
+- [ ] **Hardware SOS Trigger Test**: Press the **BOOT button (GPIO 0)** on Node A or Node B.
+- [ ] Verify node immediately broadcasts 3x emergency SOS packets (`SOS:NODE_A:23.797810:90.449720:MAYDAY INJURED RESCUER`).
+- [ ] Verify ALL nodes in range (Node B and Node C) trigger a full-screen **`🚨 SOS EMERGENCY ALERT 🚨`** on OLED showing victim's Node ID and exact GPS location!
