@@ -9,21 +9,11 @@
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-// Automatic Hardware Pin Configuration (Supports both ESP8266 and ESP32)
-#ifdef ESP8266
-  // ESP8266 NodeMCU Pins: SPI SCK=D5(14), MISO=D6(12), MOSI=D7(13)
-  #define LORA_SS    15 // Pin D8
-  #define LORA_RST   16 // Pin D0
-  #define LORA_DIO0  0  // Pin D3
-#else
-  // Standard ESP32 Pins
-  #define LORA_SCK   18
-  #define LORA_MISO  19
-  #define LORA_MOSI  23
-  #define LORA_SS    5
-  #define LORA_RST   14
-  #define LORA_DIO0  26
-#endif
+// Hardware SPI Pins for Arduino Uno / Nano (ATmega328P)
+// Fixed Hardware SPI: SCK = Pin 13, MISO = Pin 12, MOSI = Pin 11
+#define LORA_SS    10  // CS Pin
+#define LORA_RST   9   // Reset Pin
+#define LORA_DIO0  2   // Interrupt Pin
 
 #define LORA_FREQ 433E6
 
@@ -31,7 +21,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 const String MY_NODE_ID = "NODE_C";
 const int ROUTE_BROADCAST_INTERVAL = 5000;
 const int ROUTE_TIMEOUT = 15000;
-const int MAX_ROUTES = 10;
+const int MAX_ROUTES = 5; // Optimized for ATmega328P 2KB RAM
 const int MAX_HOPS = 5;
 
 struct RouteEntry {
@@ -74,7 +64,7 @@ void updateOrAddRoute(String dest, String nextHop, int hops, int rssi) {
     routingTable[routeCount].lastUpdated = now;
     routingTable[routeCount].valid = true;
     routeCount++;
-    Serial.println(">>> NEW ROUTE: Dest=" + dest + " via " + nextHop + " (" + String(hops) + "h)");
+    Serial.println(F(">>> NEW ROUTE DISCOVERED"));
   }
 }
 
@@ -93,14 +83,14 @@ void updateOLED(String statusLine, String lastRx) {
   display.setTextSize(1);
 
   display.setCursor(0, 0);
-  display.println("NODE C (Forwarding)");
+  display.println(F("NODE C (Uno/Nano)"));
 
   display.setCursor(0, 16);
-  display.print("Status: ");
+  display.print(F("Status: "));
   display.println(statusLine);
 
   display.setCursor(0, 32);
-  display.print("Last RX/Fwd: ");
+  display.print(F("Last RX/Fwd: "));
   display.println(lastRx);
 
   display.display();
@@ -120,13 +110,13 @@ void broadcastRoutes() {
 
 void forwardPacket(String src, String dest, int hops, int msgId, String payload) {
   if (hops >= MAX_HOPS) {
-    Serial.println("Drop packet: MAX HOPS Exceeded (" + String(hops) + ")");
+    Serial.println(F("Drop: MAX HOPS"));
     return;
   }
 
   String nextHop = getNextHop(dest);
   if (nextHop == "") {
-    Serial.println("Drop packet: No route to forward to " + dest);
+    Serial.println(F("Drop: No Route"));
     return;
   }
 
@@ -137,31 +127,27 @@ void forwardPacket(String src, String dest, int hops, int msgId, String payload)
   LoRa.print(fwdPacket);
   LoRa.endPacket();
 
-  Serial.println(">>> FORWARDED packet: " + src + " -> " + dest + " via " + nextHop + " (Hop " + String(hops + 1) + ")");
+  Serial.println(F(">>> FORWARDED packet"));
   updateOLED("FWD " + src + "->" + dest, "ID#" + String(msgId));
 }
 
 void setup() {
   Serial.begin(115200);
 
-#ifdef ESP8266
-  Wire.begin(4, 5); // SDA = D2 (GPIO 4), SCL = D1 (GPIO 5) on ESP8266
-  SPI.begin();       // ESP8266 SPI.begin() takes 0 arguments
-#else
-  Wire.begin(21, 22); // ESP32 pins
-  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
-#endif
-
+  // Hardware I2C on Arduino Uno/Nano: SDA = Pin A4, SCL = Pin A5
+  Wire.begin();
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
 
+  // Hardware SPI on Arduino Uno/Nano: SCK=13, MISO=12, MOSI=11
+  SPI.begin();
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
 
   if (!LoRa.begin(LORA_FREQ)) {
-    Serial.println("LoRa init failed!");
+    Serial.println(F("LoRa init failed!"));
     while (1);
   }
 
-  Serial.println("Node C - Phase 8 Multi-Hop Packet Forwarding Ready");
+  Serial.println(F("Node C - Arduino Uno/Nano Multi-Hop Ready"));
   updateOLED("Ready", "None");
 }
 
@@ -217,7 +203,7 @@ void loop() {
         String payload = incoming.substring(p5 + 1);
 
         if (dest == MY_NODE_ID) {
-          Serial.println(">>> RECEIVED FINAL DATA from " + src + " (Hops: " + String(hops) + "): " + payload);
+          Serial.println(F(">>> RECEIVED FINAL DATA!"));
           updateOLED("RX Final", src + ": " + payload);
         } else {
           forwardPacket(src, dest, hops, msgId, payload);
