@@ -151,18 +151,27 @@ void forwardPacket(String src, String dest, int hops, int msgId, String payload)
 
 void setup() {
   Serial.begin(115200);
+  
+  // Power stabilization delay for Arduino Nano
+  delay(1000);
 
-  // Initialize I2C on A4(SDA) and A5(SCL)
+  // 1. Initialize Hardware I2C (A4 = SDA, A5 = SCL)
   Wire.begin();
+  delay(500);
 
-  // Try 0x3C first, then 0x3D
+  // Initialize display matching the working test sketch
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
   }
 
-  updateOLED("Booting...", "None");
+  display.clearDisplay();
+  display.display();
+  delay(300);
 
-  // Hardware SPI on Arduino Uno/Nano
+  updateOLED("Booting...", "None");
+  delay(500);
+
+  // 2. Hardware SPI on Arduino Nano
   SPI.begin();
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
 
