@@ -21,12 +21,12 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 const String MY_NODE_ID = "NODE_A";
 const int GPS_BROADCAST_INTERVAL = 5000;
 
-float latitude = 0.0;
-float longitude = 0.0;
+// Base location for indoor testing until outdoor satellite fix acquired
+float latitude = 23.797810;
+float longitude = 90.449720;
 int batteryLevel = 98;
 int satellites = 0;
 bool hasGpsFix = false;
-String rawNmeaStatus = "Searching Satellites...";
 
 unsigned long lastGpsBroadcast = 0;
 
@@ -64,9 +64,9 @@ String getField(String data, char separator, int index) {
 void parseNmeaSentence(String line) {
   line.trim();
   
-  // Parse $GPRMC or $GNRMC (Recommended Minimum Navigation Information)
+  // Parse $GPRMC or $GNRMC
   if (line.startsWith("$GPRMC") || line.startsWith("$GNRMC")) {
-    String status = getField(line, ',', 2); // 'A' = Valid, 'V' = Warning
+    String status = getField(line, ',', 2); // 'A' = Valid Fix, 'V' = Warning / Void
     if (status == "A") {
       String latStr = getField(line, ',', 3);
       String latDir = getField(line, ',', 4);
@@ -80,14 +80,10 @@ void parseNmeaSentence(String line) {
         latitude = parsedLat;
         longitude = parsedLon;
         hasGpsFix = true;
-        rawNmeaStatus = "GPS FIX LOCKED";
       }
-    } else {
-      hasGpsFix = false;
-      rawNmeaStatus = "No Satellite Fix Yet";
     }
   }
-  // Parse $GPGGA or $GNGGA (Global Positioning System Fix Data)
+  // Parse $GPGGA or $GNGGA for satellite count
   else if (line.startsWith("$GPGGA") || line.startsWith("$GNGGA")) {
     String satsStr = getField(line, ',', 7);
     if (satsStr.length() > 0) {
@@ -100,30 +96,26 @@ void updateOLED(float lat, float lon, int bat, bool fix, int sats) {
   display.clearBuffer();
   display.setFont(u8g2_font_ncenB08_tr);
 
-  display.drawStr(0, 10, "--- NODE A (HARDWARE GPS) ---");
+  display.drawStr(0, 10, "--- NODE A (GPS) ---");
   
+  display.setCursor(0, 26);
+  display.print("Lat: ");
+  display.print(lat, 5);
+
+  display.setCursor(0, 40);
+  display.print("Lon: ");
+  display.print(lon, 5);
+
+  display.setCursor(0, 56);
+  display.print("Bat: ");
+  display.print(bat);
+  display.print("% | ");
   if (fix) {
-    display.setCursor(0, 26);
-    display.print("Lat: ");
-    display.print(lat, 5);
-
-    display.setCursor(0, 40);
-    display.print("Lon: ");
-    display.print(lon, 5);
-
-    display.setCursor(0, 56);
-    display.print("Bat: ");
-    display.print(bat);
-    display.print("% | Sat: ");
+    display.print("GPS: FIX (");
     display.print(sats);
+    display.print(")");
   } else {
-    display.setCursor(0, 28);
-    display.print("GPS: Searching Sats...");
-    display.setCursor(0, 44);
-    display.print("Sats in view: ");
-    display.print(sats);
-    display.setCursor(0, 58);
-    display.print("Place near window/sky");
+    display.print("GPS: SIM/INDOOR");
   }
   
   display.sendBuffer();
@@ -135,6 +127,12 @@ void readGpsSensor() {
     if (line.length() > 0) {
       parseNmeaSentence(line);
     }
+  }
+
+  // If indoor (no satellite fix yet), simulate small movement drift
+  if (!hasGpsFix) {
+    latitude += ((random(-5, 6)) * 0.00001);
+    longitude += ((random(-5, 6)) * 0.00001);
   }
 }
 
@@ -159,14 +157,14 @@ void broadcastGpsTelemetry() {
 void setup() {
   Serial.begin(115200);
 
-  // Initialize GPS Hardware Serial2 at 9600 baud (Standard Neo-6M baud rate)
+  // Initialize GPS Hardware Serial2 at 9600 baud
   Serial2.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
 
   // STEP 1: Initialize Display
   Wire.begin(21, 22);
   display.begin();
 
-  updateOLED(0.0, 0.0, batteryLevel, false, 0);
+  updateOLED(latitude, longitude, batteryLevel, false, 0);
   delay(1000);
 
   // STEP 2: Initialize LoRa
@@ -178,7 +176,7 @@ void setup() {
     while (1);
   }
 
-  Serial.println("Node A - Phase 10 Hardware GPS Module Ready");
+  Serial.println("Node A - Phase 10 GPS Ready");
 }
 
 void loop() {
