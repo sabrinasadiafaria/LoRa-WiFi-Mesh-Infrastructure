@@ -116,27 +116,32 @@ Dynamic Routing Table
 
 --------------------------------------------------
 
-PHASE 8 — Packet Forwarding 🔄
+PHASE 8 — Packet Forwarding ✅
 
-Goal
-Enable automatic packet forwarding across intermediate nodes to achieve multi-hop mesh communication.
+(Currently completed)
 
 Features
 - Mesh Packet Format: `DATA:SRC:DEST:HOPS:MSG_ID:PAYLOAD`
-- Destination check: If packet is for self -> process as final receiver.
-- Forwarding engine: If packet is for another node -> lookup next hop in Routing Table and forward (`>>> FORWARDED packet: SRC -> DEST`).
-- Max Hop TTL limit: Drop packets exceeding max hops (e.g. 5) to prevent infinite loops.
-- Live OLED rendering of forwarded packet counters and destination status.
+- Destination check & Multi-Hop Forwarding Engine
+- Cross-platform support (ESP32, ESP32-S3, Arduino Nano)
+- Max Hop TTL limit protection
 
 Deliverable
 First Multi-Hop Network
 
 --------------------------------------------------
 
-PHASE 9 — Self-Healing Mesh
+PHASE 9 — Self-Healing Mesh 🔄
 
-Kill Node B.
-Network automatically updates routing tables.
+Goal
+Demonstrate dynamic self-healing network rerouting when intermediate nodes fail or disappear.
+
+Features
+- Active Link Health & Timeout Detection (12s threshold)
+- Automatic invalidation of dead routes (`ALERT [SELF-HEALING]: Node NODE_B failed!`)
+- Dynamic Failover / Re-routing (`>>> SELF-HEALED FORWARD`)
+- Automatic Route Recovery upon node reconnection (`>>> RECOVERED ROUTE`)
+- OLED display live alert of network partition & self-heal events
 
 Deliverable
 Self-Healing Routing
