@@ -22,22 +22,76 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define EXTERNAL_SOS_BUTTON 4
 
 const String MY_NODE_ID = "NODE_B";
-const int ROUTE_BROADCAST_INTERVAL = 5000;
 const int TEXT_BROADCAST_INTERVAL = 10000;
+const int NEIGHBOR_TIMEOUT = 20000;
+
+// Active Connected Neighbor Tracking
+struct NeighborNode {
+  String id;
+  int rssi;
+  unsigned long lastSeen;
+  bool active;
+};
+
+NeighborNode neighbors[5];
+int neighborCount = 0;
 
 float latitude = 23.797950;
 float longitude = 90.449850;
 int batteryLevel = 92;
-int lastRssi = 0;
 int msgIdCounter = 100;
 
-unsigned long lastRouteBroadcast = 2500;
-unsigned long lastTextBroadcast = 5000;
+unsigned long lastTextBroadcast = 5000; // Offset start
 bool sosAlertActive = false;
 String lastSosNode = "";
 String lastMessage = "Scanning Mesh...";
 
-void updateOLED(String line1, String line2, String line3) {
+void updateNeighbor(String nodeSender, int rssi) {
+  if (nodeSender == MY_NODE_ID || nodeSender.length() == 0) return;
+  unsigned long now = millis();
+
+  for (int i = 0; i < neighborCount; i++) {
+    if (neighbors[i].id == nodeSender) {
+      neighbors[i].rssi = rssi;
+      neighbors[i].lastSeen = now;
+      neighbors[i].active = true;
+      return;
+    }
+  }
+
+  if (neighborCount < 5) {
+    neighbors[neighborCount].id = nodeSender;
+    neighbors[neighborCount].rssi = rssi;
+    neighbors[neighborCount].lastSeen = now;
+    neighbors[neighborCount].active = true;
+    neighborCount++;
+    Serial.println(">>> NEW CONNECTED NODE ADDED: " + nodeSender);
+  }
+}
+
+void pruneNeighbors() {
+  unsigned long now = millis();
+  for (int i = 0; i < neighborCount; i++) {
+    if (neighbors[i].active && (now - neighbors[i].lastSeen > NEIGHBOR_TIMEOUT)) {
+      neighbors[i].active = false;
+      Serial.println(">>> NODE DISCONNECTED: " + neighbors[i].id);
+    }
+  }
+}
+
+String getConnectedNodesStr() {
+  String connStr = "";
+  for (int i = 0; i < neighborCount; i++) {
+    if (neighbors[i].active) {
+      if (connStr.length() > 0) connStr += ",";
+      connStr += neighbors[i].id.substring(5); // e.g. "A", "C"
+    }
+  }
+  if (connStr.length() == 0) return "None";
+  return connStr;
+}
+
+void updateOLED(String line1, String line2) {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
@@ -53,14 +107,17 @@ void updateOLED(String line1, String line2, String line3) {
     display.setCursor(0, 48);
     display.println(line2);
   } else {
+    // Header showing active connected nodes (e.g. "NODE B | CON: A,C")
+    String headerStr = "NODE B | CON: " + getConnectedNodesStr();
     display.setCursor(0, 0);
-    display.println("--- NODE B (MESH) ---");
+    display.println(headerStr);
+
     display.setCursor(0, 18);
     display.println(line1);
     display.setCursor(0, 34);
     display.println(line2);
-    display.setCursor(0, 48);
-    display.println(line3);
+    display.setCursor(0, 50);
+    display.println("Lat:" + String(latitude, 4) + " Lon:" + String(longitude, 4));
   }
 
   display.display();
@@ -77,11 +134,11 @@ void sendSosAlert() {
     LoRa.beginPacket();
     LoRa.print(sosPacket);
     LoRa.endPacket();
-    delay(100);
+    delay(500);
   }
 
   Serial.println("\n🚨🚨🚨 [SOS BROADCAST SENT TO ALL NODES] -> " + sosPacket + "\n");
-  updateOLED("SOS SENT TO ALL", "Lat: " + String(latitude, 4), "Lon: " + String(longitude, 4));
+  updateOLED("SOS SENT TO ALL", "Lat:" + String(latitude, 4) + " Lon:" + String(longitude, 4));
 }
 
 void broadcastTextMessage(String messageText) {
@@ -93,26 +150,24 @@ void broadcastTextMessage(String messageText) {
   LoRa.print(textPacket);
   LoRa.endPacket();
 
-  lastMessage = "TX ALL: " + messageText;
-  Serial.println("TX BROADCAST to ALL NODES -> " + textPacket);
-  updateOLED("TX -> ALL NODES", messageText, "Lat:" + String(latitude,4) + " Lon:" + String(longitude,4));
+  lastMessage = "TX: " + messageText;
+  Serial.println("TX BROADCAST -> " + textPacket);
+  updateOLED("TX BROADCAST", messageText);
 }
 
 void setup() {
   Serial.begin(115200);
-
-  // Configure External SOS Push Button
   pinMode(EXTERNAL_SOS_BUTTON, INPUT_PULLUP);
 
   // STEP 1: Initialize Display
   Wire.begin(8, 9);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
 
-  updateOLED("Display Ready...", "Booting Node B", "Step 1/2 Complete");
+  updateOLED("Display Ready...", "Booting Node B");
   delay(1000);
 
-  // STEP 2: Initialize LoRa Radio with explicit SPI delay
-  updateOLED("Init LoRa Radio...", "Frequency 433MHz", "Step 2/2");
+  // STEP 2: Initialize LoRa Radio
+  updateOLED("Init LoRa Radio...", "Frequency 433MHz");
   delay(800);
 
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
@@ -120,17 +175,19 @@ void setup() {
 
   if (!LoRa.begin(LORA_FREQ)) {
     Serial.println("LoRa init failed!");
-    updateOLED("LoRa FAIL!", "Check SPI Pins!", "System Halted");
+    updateOLED("LoRa FAIL!", "Check SPI Pins!");
     while (1);
   }
 
-  updateOLED("LoRa Ready!", "All Systems GO", "Mesh Network ACTIVE");
+  updateOLED("LoRa Ready!", "Mesh Active");
   delay(1500);
 
-  Serial.println("Node B - Universal Broadcast & Rescue System Ready");
+  Serial.println("Node B - Phase 11 Connected Mesh & SOS Ready");
 }
 
 void loop() {
+  pruneNeighbors();
+
   // 1. Check External SOS Push Button
   if (digitalRead(EXTERNAL_SOS_BUTTON) == LOW) {
     delay(50);
@@ -147,7 +204,7 @@ void loop() {
     while (LoRa.available()) {
       incoming += (char)LoRa.read();
     }
-    lastRssi = LoRa.packetRssi();
+    int rssi = LoRa.packetRssi();
 
     if (incoming.startsWith("SOS:")) {
       int p1 = incoming.indexOf(':');
@@ -161,14 +218,15 @@ void loop() {
         String victimLon = incoming.substring(p3 + 1, p4);
         String sosMsg = incoming.substring(p4 + 1);
 
+        updateNeighbor(victimId, rssi);
         sosAlertActive = true;
         lastSosNode = victimId;
 
-        Serial.println("\n🚨🚨🚨 [SOS RECEIVED FROM " + victimId + "] 🚨🚨🚨");
+        Serial.println("\n🚨🚨🚨 [SOS EMERGENCY RECEIVED FROM " + victimId + "] 🚨🚨🚨");
         Serial.println("Location: " + victimLat + ", " + victimLon);
-        Serial.println("RSSI Signal: " + String(lastRssi) + " dBm\n");
+        Serial.println("Payload: " + sosMsg + " (RSSI: " + String(rssi) + "dBm)\n");
 
-        updateOLED("SOS ALERT!", "Lat:" + victimLat + " Lon:" + victimLon, "Signal: " + String(lastRssi) + "dBm");
+        updateOLED("SOS: " + victimId + " (" + String(rssi) + "dBm)", "Lat:" + victimLat + " Lon:" + victimLon);
       }
     } 
     else if (incoming.startsWith("TEXT:")) {
@@ -184,15 +242,17 @@ void loop() {
         String txtMsg = incoming.substring(p4 + 1);
 
         if (src != MY_NODE_ID && (dest == MY_NODE_ID || dest == "ALL" || dest == "BROADCAST")) {
+          updateNeighbor(src, rssi);
           lastMessage = src + ": " + txtMsg;
-          Serial.println(">>> RX MSG from " + src + " [RSSI " + String(lastRssi) + "dBm]: " + txtMsg);
-          updateOLED("RX: " + src + " (" + String(lastRssi) + "dBm)", txtMsg, "Lat:" + String(latitude,4) + " Lon:" + String(longitude,4));
+
+          Serial.println(">>> RX MSG from " + src + " [RSSI " + String(rssi) + "dBm]: " + txtMsg);
+          updateOLED("RX: " + src + " (" + String(rssi) + "dBm)", txtMsg);
         }
       }
     }
   }
 
-  // 3. Periodically transmit broadcast text messages to ALL connected nodes
+  // 3. Broadcast Periodic Text Messages to ALL connected nodes
   if (millis() - lastTextBroadcast > TEXT_BROADCAST_INTERVAL && !sosAlertActive) {
     static int msgCount = 1;
     String sampleMsg = "Node B Patrol #" + String(msgCount++);
