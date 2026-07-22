@@ -22,9 +22,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define EXTERNAL_SOS_BUTTON 4
 
 const String MY_NODE_ID = "NODE_B";
-const int HEARTBEAT_INTERVAL = 4000;    // Broadcast Heartbeat every 4s to keep connection alive ALWAYS
-const int TEXT_BROADCAST_INTERVAL = 10000;
-const int NEIGHBOR_TIMEOUT = 45000;      // 45s timeout
+const int NEIGHBOR_TIMEOUT = 30000; // 30s timeout
 
 // Active Connected Neighbor Tracking
 struct NeighborNode {
@@ -42,10 +40,11 @@ float longitude = 90.449850;
 int batteryLevel = 92;
 int msgIdCounter = 100;
 
-unsigned long lastHeartbeat = 1500;
-unsigned long lastTextBroadcast = 5000;
+unsigned long lastBroadcastTime = 0;
+unsigned long currentBroadcastInterval = 6000;
 bool sosAlertActive = false;
 String lastSosNode = "";
+String lastMessage = "Scanning Mesh...";
 
 void updateNeighbor(String nodeSender, int rssi) {
   if (nodeSender == MY_NODE_ID || nodeSender.length() == 0) return;
@@ -124,15 +123,6 @@ void updateOLED(String line1, String line2) {
   display.display();
 }
 
-void sendHeartbeat() {
-  unsigned long uptimeSec = millis() / 1000;
-  String hbPacket = "HB:" + MY_NODE_ID + ":" + String(uptimeSec);
-  
-  LoRa.beginPacket();
-  LoRa.print(hbPacket);
-  LoRa.endPacket();
-}
-
 void sendSosAlert() {
   sosAlertActive = true;
   lastSosNode = MY_NODE_ID;
@@ -143,7 +133,7 @@ void sendSosAlert() {
     LoRa.beginPacket();
     LoRa.print(sosPacket);
     LoRa.endPacket();
-    delay(400);
+    delay(500);
   }
 
   Serial.println("\n🚨🚨🚨 [SOS BROADCAST SENT TO ALL NODES] -> " + sosPacket + "\n");
@@ -158,8 +148,11 @@ void broadcastTextMessage(String messageText) {
   LoRa.print(textPacket);
   LoRa.endPacket();
 
+  lastMessage = "TX: " + messageText;
   Serial.println("TX BROADCAST -> " + textPacket);
   updateOLED("TX BROADCAST", messageText);
+
+  delay(50);
 }
 
 void setup() {
@@ -189,7 +182,11 @@ void setup() {
   updateOLED("LoRa Ready!", "Mesh Active");
   delay(1500);
 
-  Serial.println("Node B - Phase 11 Permanent Connection Mesh Ready");
+  Serial.println("Node B - Phase 11 Synchronized Mesh Ready");
+
+  // Seed random generator for collision avoidance jitter
+  randomSeed(analogRead(0) + millis());
+  lastBroadcastTime = millis() + random(1000, 3000); // Stagger start offset
 }
 
 void loop() {
@@ -213,18 +210,7 @@ void loop() {
     }
     int rssi = LoRa.packetRssi();
 
-    if (incoming.startsWith("HB:")) {
-      int p1 = incoming.indexOf(':');
-      int p2 = incoming.indexOf(':', p1 + 1);
-      if (p1 != -1) {
-        String senderId = (p2 == -1) ? incoming.substring(p1 + 1) : incoming.substring(p1 + 1, p2);
-        updateNeighbor(senderId, rssi);
-        if (!sosAlertActive) {
-          updateOLED("Connected Nodes", getConnectedNodesStr());
-        }
-      }
-    }
-    else if (incoming.startsWith("SOS:")) {
+    if (incoming.startsWith("SOS:")) {
       int p1 = incoming.indexOf(':');
       int p2 = incoming.indexOf(':', p1 + 1);
       int p3 = incoming.indexOf(':', p2 + 1);
@@ -270,17 +256,13 @@ void loop() {
     }
   }
 
-  // 3. Broadcast Periodic Heartbeats ALWAYS
-  if (millis() - lastHeartbeat > HEARTBEAT_INTERVAL) {
-    sendHeartbeat();
-    lastHeartbeat = millis();
-  }
-
-  // 4. Broadcast Periodic Text Messages
-  if (millis() - lastTextBroadcast > TEXT_BROADCAST_INTERVAL) {
+  // 3. Single Periodic Broadcast Engine with Jitter
+  if (millis() - lastBroadcastTime > currentBroadcastInterval) {
     static int msgCount = 1;
     String sampleMsg = "Node B Patrol #" + String(msgCount++);
     broadcastTextMessage(sampleMsg);
-    lastTextBroadcast = millis();
+
+    currentBroadcastInterval = 6000 + random(0, 2000);
+    lastBroadcastTime = millis();
   }
 }

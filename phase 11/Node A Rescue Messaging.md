@@ -22,9 +22,7 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 #define EXTERNAL_SOS_BUTTON 4
 
 const String MY_NODE_ID = "NODE_A";
-const int HEARTBEAT_INTERVAL = 4000;    // Broadcast Heartbeat every 4s to keep connection alive ALWAYS
-const int TEXT_BROADCAST_INTERVAL = 10000;
-const int NEIGHBOR_TIMEOUT = 45000;      // 45s timeout before declaring node disconnected
+const int NEIGHBOR_TIMEOUT = 30000; // 30s timeout
 
 // Active Connected Neighbor Tracking
 struct NeighborNode {
@@ -42,11 +40,11 @@ float longitude = 90.449720;
 int batteryLevel = 98;
 int msgIdCounter = 1;
 
-unsigned long lastHeartbeat = 0;
-unsigned long lastTextBroadcast = 0;
+unsigned long lastBroadcastTime = 0;
+unsigned long currentBroadcastInterval = 6000;
 bool sosAlertActive = false;
 String lastSosNode = "";
-String lastSosPayload = "";
+String lastMessage = "Scanning Mesh...";
 
 void updateNeighbor(String nodeSender, int rssi) {
   if (nodeSender == MY_NODE_ID || nodeSender.length() == 0) return;
@@ -123,27 +121,17 @@ void updateOLED(String line1, String line2) {
   display.sendBuffer();
 }
 
-void sendHeartbeat() {
-  unsigned long uptimeSec = millis() / 1000;
-  String hbPacket = "HB:" + MY_NODE_ID + ":" + String(uptimeSec);
-  
-  LoRa.beginPacket();
-  LoRa.print(hbPacket);
-  LoRa.endPacket();
-}
-
 void sendSosAlert() {
   sosAlertActive = true;
   lastSosNode = MY_NODE_ID;
-  lastSosPayload = "MAYDAY INJURED RESCUER";
   
-  String sosPacket = "SOS:" + MY_NODE_ID + ":" + String(latitude, 6) + ":" + String(longitude, 6) + ":" + lastSosPayload;
+  String sosPacket = "SOS:" + MY_NODE_ID + ":" + String(latitude, 6) + ":" + String(longitude, 6) + ":MAYDAY INJURED RESCUER";
 
   for (int i = 0; i < 3; i++) {
     LoRa.beginPacket();
     LoRa.print(sosPacket);
     LoRa.endPacket();
-    delay(400);
+    delay(500);
   }
 
   Serial.println("\n🚨🚨🚨 [SOS BROADCAST SENT TO ALL NODES] -> " + sosPacket + "\n");
@@ -152,14 +140,19 @@ void sendSosAlert() {
 
 void broadcastTextMessage(String messageText) {
   int msgId = msgIdCounter++;
+  // Format: TEXT:SRC:DEST:MSG_ID:TEXT_BODY (DEST = ALL)
   String textPacket = "TEXT:" + MY_NODE_ID + ":ALL:" + String(msgId) + ":" + messageText;
 
   LoRa.beginPacket();
   LoRa.print(textPacket);
   LoRa.endPacket();
 
+  lastMessage = "TX: " + messageText;
   Serial.println("TX BROADCAST -> " + textPacket);
   updateOLED("TX BROADCAST", messageText);
+
+  // Return to receiver mode with small settling delay
+  delay(50);
 }
 
 void setup() {
@@ -194,14 +187,18 @@ void setup() {
   updateOLED("LoRa Ready!", "Mesh Active");
   delay(1500);
 
-  Serial.println("Node A - Phase 11 Permanent Connection Mesh Ready");
+  Serial.println("Node A - Phase 11 Synchronized Mesh Ready");
+  
+  // Seed random generator for collision avoidance jitter
+  randomSeed(analogRead(0) + millis());
+  lastBroadcastTime = millis() + random(0, 2000); // Random initial offset
 }
 
 void loop() {
-  // Prune disconnected neighbors
+  // 1. Prune disconnected neighbors
   pruneNeighbors();
 
-  // 1. Check External SOS Push Button
+  // 2. Check External SOS Push Button
   if (digitalRead(EXTERNAL_SOS_BUTTON) == LOW) {
     delay(50);
     if (digitalRead(EXTERNAL_SOS_BUTTON) == LOW) {
@@ -210,7 +207,7 @@ void loop() {
     }
   }
 
-  // 2. Process Incoming Packets from ALL Nodes
+  // 3. Process Incoming Packets from ALL Nodes
   int packetSize = LoRa.parsePacket();
   if (packetSize) {
     String incoming = "";
@@ -219,18 +216,7 @@ void loop() {
     }
     int rssi = LoRa.packetRssi();
 
-    if (incoming.startsWith("HB:")) {
-      int p1 = incoming.indexOf(':');
-      int p2 = incoming.indexOf(':', p1 + 1);
-      if (p1 != -1) {
-        String senderId = (p2 == -1) ? incoming.substring(p1 + 1) : incoming.substring(p1 + 1, p2);
-        updateNeighbor(senderId, rssi);
-        if (!sosAlertActive) {
-          updateOLED("Connected Nodes", getConnectedNodesStr());
-        }
-      }
-    }
-    else if (incoming.startsWith("SOS:")) {
+    if (incoming.startsWith("SOS:")) {
       int p1 = incoming.indexOf(':');
       int p2 = incoming.indexOf(':', p1 + 1);
       int p3 = incoming.indexOf(':', p2 + 1);
@@ -276,17 +262,14 @@ void loop() {
     }
   }
 
-  // 3. Broadcast Periodic Heartbeats ALWAYS to keep connection alive
-  if (millis() - lastHeartbeat > HEARTBEAT_INTERVAL) {
-    sendHeartbeat();
-    lastHeartbeat = millis();
-  }
-
-  // 4. Broadcast Periodic Text Messages
-  if (millis() - lastTextBroadcast > TEXT_BROADCAST_INTERVAL) {
+  // 4. Single Periodic Broadcast Engine with Jitter (Prevents RF Collisions)
+  if (millis() - lastBroadcastTime > currentBroadcastInterval) {
     static int msgCount = 1;
     String sampleMsg = "Rescue Active #" + String(msgCount++);
     broadcastTextMessage(sampleMsg);
-    lastTextBroadcast = millis();
+
+    // Set next broadcast interval with 0 to 2000ms randomized jitter
+    currentBroadcastInterval = 6000 + random(0, 2000);
+    lastBroadcastTime = millis();
   }
 }
