@@ -40,6 +40,24 @@ unsigned long lastSendTime = 0;
 int msgIdCounter = 100;
 String selfHealStatus = "Mesh Healthy";
 
+void updateOLED(String statusLine, String lastRx) {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+
+  display.setCursor(0, 0);
+  display.println("--- NODE B MESH ---");
+
+  display.setCursor(0, 20);
+  display.print("Status: ");
+  display.println(statusLine);
+
+  display.setCursor(0, 40);
+  display.println(lastRx);
+
+  display.display();
+}
+
 void updateOrAddRoute(String dest, String nextHop, int hops, int rssi) {
   if (dest == MY_NODE_ID) return;
   unsigned long now = millis();
@@ -98,25 +116,6 @@ String getBestNextHop(String dest) {
   return bestHop;
 }
 
-void updateOLED(String statusLine, String lastRx) {
-  display.clearDisplay();
-  display.setTextColor(SSD1306_WHITE);
-  display.setTextSize(1);
-
-  display.setCursor(0, 0);
-  display.println("NODE B (Self-Healing)");
-
-  display.setCursor(0, 16);
-  display.print("Status: ");
-  display.println(statusLine);
-
-  display.setCursor(0, 32);
-  display.print("Last Event: ");
-  display.println(lastRx);
-
-  display.display();
-}
-
 void broadcastRoutes() {
   String packetStr = "RT:" + MY_NODE_ID + ":";
   for (int i = 0; i < routeCount; i++) {
@@ -156,19 +155,36 @@ void forwardPacket(String src, String dest, int hops, int msgId, String payload)
 void setup() {
   Serial.begin(115200);
 
+  // STEP 1: Initialize Display
   Wire.begin(8, 9);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+
+  updateOLED("Display Ready...", "Booting Node B");
+  delay(1200);
+
+  // STEP 2: Initialize LoRa Radio
+  updateOLED("Init LoRa Radio...", "Frequency 433MHz");
+  delay(800);
 
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
 
   if (!LoRa.begin(LORA_FREQ)) {
     Serial.println("LoRa init failed!");
+    updateOLED("LoRa FAIL!", "Check SPI Wiring!");
     while (1);
   }
 
+  // STEP 3: LoRa Ready
+  updateOLED("LoRa Ready!", "433MHz Radio ON");
+  delay(1200);
+
+  // STEP 4: All OK Good To Go!
+  updateOLED("All OK!", "Good to go!");
+  delay(1500);
+
   Serial.println("Node B - Phase 9 Self-Healing Mesh Ready");
-  updateOLED("Mesh Initialized", "Waiting...");
+  updateOLED("Mesh Active", "Scanning Routes...");
 }
 
 void loop() {

@@ -36,6 +36,21 @@ unsigned long lastSendTime = 0;
 int msgIdCounter = 1;
 String selfHealStatus = "Mesh Healthy";
 
+void updateOLED(String statusLine, String lastRx) {
+  display.clearBuffer();
+  display.setFont(u8g2_font_ncenB08_tr);
+
+  display.drawStr(0, 10, "--- NODE A MESH ---");
+  
+  display.setCursor(0, 26);
+  display.print("Status: " + statusLine);
+
+  display.setCursor(0, 46);
+  display.print(lastRx);
+  
+  display.sendBuffer();
+}
+
 void updateOrAddRoute(String dest, String nextHop, int hops, int rssi) {
   if (dest == MY_NODE_ID) return;
   unsigned long now = millis();
@@ -92,22 +107,6 @@ String getBestNextHop(String dest) {
     }
   }
   return bestHop;
-}
-
-void updateOLED(String statusLine, String lastRx) {
-  display.clearBuffer();
-  display.setFont(u8g2_font_ncenB08_tr);
-
-  display.drawStr(0, 10, "NODE A (Self-Healing)");
-  
-  display.setCursor(0, 24);
-  display.print(statusLine);
-
-  display.drawStr(0, 38, "Last Event:");
-  display.setCursor(0, 52);
-  display.print(lastRx);
-  
-  display.sendBuffer();
 }
 
 void broadcastRoutes() {
@@ -168,19 +167,36 @@ void forwardPacket(String src, String dest, int hops, int msgId, String payload)
 void setup() {
   Serial.begin(115200);
 
+  // STEP 1: Initialize Display
   Wire.begin(21, 22);
   display.begin();
+
+  updateOLED("Display Ready...", "Booting Node A");
+  delay(1200);
+
+  // STEP 2: Initialize LoRa Radio
+  updateOLED("Init LoRa Radio...", "Frequency 433MHz");
+  delay(800);
 
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
 
   if (!LoRa.begin(LORA_FREQ)) {
     Serial.println("LoRa init failed!");
+    updateOLED("LoRa FAIL!", "Check SPI Wiring!");
     while (1);
   }
 
+  // STEP 3: LoRa Ready
+  updateOLED("LoRa Ready!", "433MHz Radio ON");
+  delay(1200);
+
+  // STEP 4: All OK Good To Go!
+  updateOLED("All OK!", "Good to go!");
+  delay(1500);
+
   Serial.println("Node A - Phase 9 Self-Healing Mesh Ready");
-  updateOLED("Mesh Initialized", "Waiting...");
+  updateOLED("Mesh Active", "Scanning Routes...");
 }
 
 void loop() {
