@@ -7,7 +7,9 @@
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+#define OLED_RESET -1
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // Hardware SPI Pins for Arduino Uno / Nano (ATmega328P)
 #define LORA_SS    10
@@ -36,6 +38,27 @@ int routeCount = 0;
 unsigned long lastBroadcastTime = 4000;
 unsigned long lastSendTime = 0;
 int msgIdCounter = 200;
+
+void updateOLED(String statusLine, String lastRx) {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+
+  display.setCursor(0, 0);
+  display.println(F("NODE C (Self-Healing)"));
+
+  display.setCursor(0, 18);
+  display.print(F("Status: "));
+  display.println(statusLine);
+
+  display.setCursor(0, 36);
+  display.print(F("Last RX/Fwd:"));
+
+  display.setCursor(0, 48);
+  display.println(lastRx);
+
+  display.display();
+}
 
 void updateOrAddRoute(String dest, String nextHop, int hops, int rssi) {
   if (dest == MY_NODE_ID) return;
@@ -72,6 +95,7 @@ void checkRouteTimeouts() {
     if (routingTable[i].valid && (now - routingTable[i].lastUpdated > ROUTE_TIMEOUT)) {
       routingTable[i].valid = false;
       Serial.println(F(">>> ALERT [SELF-HEALING]: Route Lost!"));
+      updateOLED("Route Lost!", routingTable[i].destNode);
     }
   }
 }
@@ -88,25 +112,6 @@ String getBestNextHop(String dest) {
     }
   }
   return bestHop;
-}
-
-void updateOLED(String statusLine, String lastRx) {
-  display.clearDisplay();
-  display.setTextColor(SSD1306_WHITE);
-  display.setTextSize(1);
-
-  display.setCursor(0, 0);
-  display.println(F("NODE C (Self-Healing)"));
-
-  display.setCursor(0, 16);
-  display.print(F("Status: "));
-  display.println(statusLine);
-
-  display.setCursor(0, 32);
-  display.print(F("Last RX/Fwd: "));
-  display.println(lastRx);
-
-  display.display();
 }
 
 void broadcastRoutes() {
@@ -147,14 +152,23 @@ void forwardPacket(String src, String dest, int hops, int msgId, String payload)
 void setup() {
   Serial.begin(115200);
 
+  // Initialize I2C on A4(SDA) and A5(SCL)
   Wire.begin();
-  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
 
+  // Try 0x3C first, then 0x3D
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
+  }
+
+  updateOLED("Booting...", "None");
+
+  // Hardware SPI on Arduino Uno/Nano
   SPI.begin();
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
 
   if (!LoRa.begin(LORA_FREQ)) {
     Serial.println(F("LoRa init failed!"));
+    updateOLED("LoRa FAIL!", "Check Pins!");
     while (1);
   }
 
@@ -196,6 +210,7 @@ void loop() {
             }
             startIdx = semiIdx + 1;
           }
+          updateOLED("Mesh Healthy", "RX RT from " + senderId);
         }
       }
     } 
