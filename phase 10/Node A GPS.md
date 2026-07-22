@@ -14,68 +14,127 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 
 #define LORA_FREQ 433E6
 
-// GPS Hardware Serial Pins on ESP32 (Serial2)
-#define GPS_RX_PIN 16
-#define GPS_TX_PIN 17
+// GPS Hardware Serial2 Pins on ESP32
+#define GPS_RX_PIN 16 // ESP32 RX2 -> Connect to GPS TX
+#define GPS_TX_PIN 17 // ESP32 TX2 -> Connect to GPS RX
 
 const String MY_NODE_ID = "NODE_A";
-const int GPS_BROADCAST_INTERVAL = 6000; // Broadcast GPS telemetry every 6s
+const int GPS_BROADCAST_INTERVAL = 5000;
 
-// Default / Base GPS Coordinates (UIU Campus, Dhaka)
-float latitude = 23.797810;
-float longitude = 90.449720;
+float latitude = 0.0;
+float longitude = 0.0;
 int batteryLevel = 98;
-bool hasGpsLock = false;
+int satellites = 0;
+bool hasGpsFix = false;
+String rawNmeaStatus = "Searching Satellites...";
 
 unsigned long lastGpsBroadcast = 0;
 
-void updateOLED(float lat, float lon, int bat, bool lock) {
+// Helper to parse NMEA coordinate format (DDMM.MMMM to Decimal Degrees)
+float parseNmeaCoord(String val, String dir) {
+  if (val.length() < 4) return 0.0;
+  int dotIdx = val.indexOf('.');
+  if (dotIdx == -1) return 0.0;
+  
+  int degLen = dotIdx - 2;
+  float degrees = val.substring(0, degLen).toFloat();
+  float minutes = val.substring(degLen).toFloat();
+  float decDeg = degrees + (minutes / 60.0);
+  
+  if (dir == "S" || dir == "W") decDeg = -decDeg;
+  return decDeg;
+}
+
+// Split NMEA comma-separated strings
+String getField(String data, char separator, int index) {
+  int found = 0;
+  int strIndex[] = { 0, -1 };
+  int maxIndex = data.length() - 1;
+
+  for (int i = 0; i <= maxIndex && found <= index; i++) {
+    if (data.charAt(i) == separator || i == maxIndex) {
+      found++;
+      strIndex[0] = strIndex[1] + 1;
+      strIndex[1] = (i == maxIndex) ? i + 1 : i;
+    }
+  }
+  return found > index ? data.substring(strIndex[0], strIndex[1]) : "";
+}
+
+void parseNmeaSentence(String line) {
+  line.trim();
+  
+  // Parse $GPRMC or $GNRMC (Recommended Minimum Navigation Information)
+  if (line.startsWith("$GPRMC") || line.startsWith("$GNRMC")) {
+    String status = getField(line, ',', 2); // 'A' = Valid, 'V' = Warning
+    if (status == "A") {
+      String latStr = getField(line, ',', 3);
+      String latDir = getField(line, ',', 4);
+      String lonStr = getField(line, ',', 5);
+      String lonDir = getField(line, ',', 6);
+
+      float parsedLat = parseNmeaCoord(latStr, latDir);
+      float parsedLon = parseNmeaCoord(lonStr, lonDir);
+
+      if (parsedLat != 0.0 && parsedLon != 0.0) {
+        latitude = parsedLat;
+        longitude = parsedLon;
+        hasGpsFix = true;
+        rawNmeaStatus = "GPS FIX LOCKED";
+      }
+    } else {
+      hasGpsFix = false;
+      rawNmeaStatus = "No Satellite Fix Yet";
+    }
+  }
+  // Parse $GPGGA or $GNGGA (Global Positioning System Fix Data)
+  else if (line.startsWith("$GPGGA") || line.startsWith("$GNGGA")) {
+    String satsStr = getField(line, ',', 7);
+    if (satsStr.length() > 0) {
+      satellites = satsStr.toInt();
+    }
+  }
+}
+
+void updateOLED(float lat, float lon, int bat, bool fix, int sats) {
   display.clearBuffer();
   display.setFont(u8g2_font_ncenB08_tr);
 
-  display.drawStr(0, 10, "--- NODE A (GPS) ---");
+  display.drawStr(0, 10, "--- NODE A (HARDWARE GPS) ---");
   
-  display.setCursor(0, 26);
-  display.print("Lat: ");
-  display.print(lat, 5);
+  if (fix) {
+    display.setCursor(0, 26);
+    display.print("Lat: ");
+    display.print(lat, 5);
 
-  display.setCursor(0, 40);
-  display.print("Lon: ");
-  display.print(lon, 5);
+    display.setCursor(0, 40);
+    display.print("Lon: ");
+    display.print(lon, 5);
 
-  display.setCursor(0, 56);
-  display.print("Bat: ");
-  display.print(bat);
-  display.print("% | ");
-  if (lock) {
-    display.print("GPS: FIX");
+    display.setCursor(0, 56);
+    display.print("Bat: ");
+    display.print(bat);
+    display.print("% | Sat: ");
+    display.print(sats);
   } else {
-    display.print("GPS: SIM");
+    display.setCursor(0, 28);
+    display.print("GPS: Searching Sats...");
+    display.setCursor(0, 44);
+    display.print("Sats in view: ");
+    display.print(sats);
+    display.setCursor(0, 58);
+    display.print("Place near window/sky");
   }
   
   display.sendBuffer();
 }
 
 void readGpsSensor() {
-  // Read NMEA sentences if GPS module is sending data on Serial2
   while (Serial2.available() > 0) {
-    String nmeaLine = Serial2.readStringUntil('\n');
-    // Parse $GPRMC or $GPGGA if valid fix
-    if (nmeaLine.startsWith("$GPRMC") || nmeaLine.startsWith("$GPGGA")) {
-      int commaCount = 0;
-      for (int i = 0; i < nmeaLine.length(); i++) {
-        if (nmeaLine.charAt(i) == ',') commaCount++;
-      }
-      if (commaCount >= 6) {
-        hasGpsLock = true;
-      }
+    String line = Serial2.readStringUntil('\n');
+    if (line.length() > 0) {
+      parseNmeaSentence(line);
     }
-  }
-
-  // If no physical GPS fix on bench test, add realistic small movement drift
-  if (!hasGpsLock) {
-    latitude += ((random(-5, 6)) * 0.00001);
-    longitude += ((random(-5, 6)) * 0.00001);
   }
 }
 
@@ -94,23 +153,23 @@ void broadcastGpsTelemetry() {
   LoRa.endPacket();
 
   Serial.println("TX GPS Telemetry -> " + telemetryPacket);
-  updateOLED(latitude, longitude, batteryLevel, hasGpsLock);
+  updateOLED(latitude, longitude, batteryLevel, hasGpsFix, satellites);
 }
 
 void setup() {
   Serial.begin(115200);
 
-  // Initialize GPS Hardware Serial2
+  // Initialize GPS Hardware Serial2 at 9600 baud (Standard Neo-6M baud rate)
   Serial2.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
 
-  // Step 1: Initialize Display
+  // STEP 1: Initialize Display
   Wire.begin(21, 22);
   display.begin();
 
-  updateOLED(latitude, longitude, batteryLevel, false);
+  updateOLED(0.0, 0.0, batteryLevel, false, 0);
   delay(1000);
 
-  // Step 2: Initialize LoRa
+  // STEP 2: Initialize LoRa
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
 
@@ -119,11 +178,11 @@ void setup() {
     while (1);
   }
 
-  Serial.println("Node A - Phase 10 GPS Tracking Ready");
+  Serial.println("Node A - Phase 10 Hardware GPS Module Ready");
 }
 
 void loop() {
-  // 1. Parse hardware GPS serial stream
+  // 1. Read real GPS stream from hardware Serial2
   readGpsSensor();
 
   // 2. Receive incoming GPS Telemetry packets from other nodes

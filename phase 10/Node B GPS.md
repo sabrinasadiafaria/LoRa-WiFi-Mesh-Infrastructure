@@ -18,68 +18,47 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 #define LORA_FREQ 433E6
 
-// GPS Hardware Serial Pins on ESP32-S3 (Serial2)
-#define GPS_RX_PIN 16
-#define GPS_TX_PIN 17
-
 const String MY_NODE_ID = "NODE_B";
-const int GPS_BROADCAST_INTERVAL = 6000;
+const int GPS_BROADCAST_INTERVAL = 5000;
 
-// Default / Base GPS Coordinates (UIU Campus, Dhaka)
+// Fixed / Test GPS Coordinates for Node B (UIU Campus, Dhaka)
 float latitude = 23.797950;
 float longitude = 90.449850;
 int batteryLevel = 92;
-bool hasGpsLock = false;
 
-unsigned long lastGpsBroadcast = 3000; // Offset start by 3s to avoid collision
+unsigned long lastGpsBroadcast = 2500; // Offset start to avoid packet collision
 
-void updateOLED(float lat, float lon, int bat, bool lock) {
+void updateOLED(float lat, float lon, int bat, String lastRx) {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
 
   display.setCursor(0, 0);
-  display.println("--- NODE B (GPS) ---");
+  display.println("--- NODE B (TEST GPS) ---");
 
-  display.setCursor(0, 18);
+  display.setCursor(0, 16);
   display.print("Lat: ");
   display.println(lat, 5);
 
-  display.setCursor(0, 32);
+  display.setCursor(0, 28);
   display.print("Lon: ");
   display.println(lon, 5);
 
-  display.setCursor(0, 48);
+  display.setCursor(0, 42);
   display.print("Bat: ");
   display.print(bat);
-  display.print("% | ");
-  if (lock) {
-    display.println("GPS: FIX");
-  } else {
-    display.println("GPS: SIM");
-  }
+  display.print("% [TEST FIX]");
+
+  display.setCursor(0, 54);
+  display.println(lastRx);
 
   display.display();
 }
 
-void readGpsSensor() {
-  while (Serial2.available() > 0) {
-    String nmeaLine = Serial2.readStringUntil('\n');
-    if (nmeaLine.startsWith("$GPRMC") || nmeaLine.startsWith("$GPGGA")) {
-      int commaCount = 0;
-      for (int i = 0; i < nmeaLine.length(); i++) {
-        if (nmeaLine.charAt(i) == ',') commaCount++;
-      }
-      if (commaCount >= 6) {
-        hasGpsLock = true;
-      }
-    }
-  }
-
-  if (!hasGpsLock) {
-    latitude += ((random(-5, 6)) * 0.00001);
-    longitude += ((random(-5, 6)) * 0.00001);
-  }
+void simulateGpsMovement() {
+  // Minor realistic drift around test location
+  latitude += ((random(-3, 4)) * 0.00001);
+  longitude += ((random(-3, 4)) * 0.00001);
 }
 
 void broadcastGpsTelemetry() {
@@ -96,19 +75,17 @@ void broadcastGpsTelemetry() {
   LoRa.print(telemetryPacket);
   LoRa.endPacket();
 
-  Serial.println("TX GPS Telemetry -> " + telemetryPacket);
-  updateOLED(latitude, longitude, batteryLevel, hasGpsLock);
+  Serial.println("TX Telemetry -> " + telemetryPacket);
+  updateOLED(latitude, longitude, batteryLevel, "TX Telemetry OK");
 }
 
 void setup() {
   Serial.begin(115200);
 
-  Serial2.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-
   Wire.begin(8, 9);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
 
-  updateOLED(latitude, longitude, batteryLevel, false);
+  updateOLED(latitude, longitude, batteryLevel, "Booting Node B...");
   delay(1000);
 
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
@@ -119,11 +96,12 @@ void setup() {
     while (1);
   }
 
-  Serial.println("Node B - Phase 10 GPS Tracking Ready");
+  Serial.println("Node B - Phase 10 Test Location GPS Ready");
+  updateOLED(latitude, longitude, batteryLevel, "Mesh Active");
 }
 
 void loop() {
-  readGpsSensor();
+  simulateGpsMovement();
 
   int packetSize = LoRa.parsePacket();
   if (packetSize) {
@@ -135,6 +113,14 @@ void loop() {
 
     if (incoming.startsWith("GPS:")) {
       Serial.println("RX Telemetry [RSSI " + String(rssi) + "dBm]: " + incoming);
+      
+      // Parse sender ID
+      int firstColon = incoming.indexOf(':');
+      int secondColon = incoming.indexOf(':', firstColon + 1);
+      if (firstColon != -1 && secondColon != -1) {
+        String senderId = incoming.substring(firstColon + 1, secondColon);
+        updateOLED(latitude, longitude, batteryLevel, "RX GPS from " + senderId);
+      }
     }
   }
 
