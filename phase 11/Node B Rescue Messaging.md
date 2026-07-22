@@ -18,8 +18,10 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 #define LORA_FREQ 433E6
 
+// External SOS Push Button Pin on Node B
+#define EXTERNAL_SOS_BUTTON 4 // GPIO 4 -> Connect to one side of button, other side to GND
+
 const String MY_NODE_ID = "NODE_B";
-const int SOS_BUTTON_PIN = 0; // ESP32-S3 BOOT button (GPIO 0)
 
 float latitude = 23.797950;
 float longitude = 90.449850;
@@ -89,12 +91,14 @@ void sendTextMessage(String dest, String messageText) {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(SOS_BUTTON_PIN, INPUT_PULLUP);
+
+  // Configure External SOS Push Button with Internal Pull-up (Active LOW)
+  pinMode(EXTERNAL_SOS_BUTTON, INPUT_PULLUP);
 
   Wire.begin(8, 9);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
 
-  updateOLED("Status: Booting", "Rescue System ON", "Press BOOT for SOS");
+  updateOLED("Status: Booting", "Rescue System ON", "Press Button for SOS");
   delay(1000);
 
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
@@ -106,13 +110,13 @@ void setup() {
   }
 
   Serial.println("Node B - Phase 11 Rescue Messaging System Ready");
-  updateOLED("Status: READY", "Press BOOT for SOS", "Mesh Active");
+  updateOLED("Status: READY", "Press SOS Button", "Mesh Active");
 }
 
 void loop() {
-  if (digitalRead(SOS_BUTTON_PIN) == LOW) {
+  if (digitalRead(EXTERNAL_SOS_BUTTON) == LOW) {
     delay(50);
-    if (digitalRead(SOS_BUTTON_PIN) == LOW) {
+    if (digitalRead(EXTERNAL_SOS_BUTTON) == LOW) {
       sendSosAlert();
       delay(2000);
     }

@@ -16,6 +16,9 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define LORA_RST   9
 #define LORA_DIO0  2
 
+// External SOS Push Button Pin on Node C (Arduino Nano Pin D5)
+#define EXTERNAL_SOS_BUTTON 5 // Pin D5 -> Connect to one side of button, other side to GND
+
 #define LORA_FREQ 433E6
 
 const String MY_NODE_ID = "NODE_C";
@@ -55,9 +58,30 @@ void updateOLED(String header, String line1, String line2) {
   display.display();
 }
 
+void sendSosAlert() {
+  sosAlertActive = true;
+  lastSosNode = MY_NODE_ID;
+
+  // Format: SOS:SENDER_ID:LATITUDE:LONGITUDE:PAYLOAD
+  String sosPacket = "SOS:" + MY_NODE_ID + ":" + String(latitude, 6) + ":" + String(longitude, 6) + ":MAYDAY FIELD RESCUER";
+
+  for (int i = 0; i < 3; i++) {
+    LoRa.beginPacket();
+    LoRa.print(sosPacket);
+    LoRa.endPacket();
+    delay(100);
+  }
+
+  Serial.println(F("\n🚨 [SOS BROADCAST SENT]"));
+  updateOLED("SOS BROADCAST SENT", "Lat: " + String(latitude, 4), "Lon: " + String(longitude, 4));
+}
+
 void setup() {
   Serial.begin(115200);
   delay(500);
+
+  // Configure External SOS Push Button on Pin D5 (Active LOW)
+  pinMode(EXTERNAL_SOS_BUTTON, INPUT_PULLUP);
 
   // STEP 1: Initialize Display
   Wire.begin();
@@ -71,7 +95,7 @@ void setup() {
   display.display();
   delay(200);
 
-  updateOLED("Status: Booting", "Rescue System ON", "Nano Active");
+  updateOLED("Status: Booting", "Rescue System ON", "Press Button for SOS");
   delay(1000);
 
   // STEP 2: Initialize LoRa
@@ -84,10 +108,19 @@ void setup() {
   }
 
   Serial.println(F("Node C - Arduino Nano Rescue System Ready"));
-  updateOLED("Status: READY", "Rescue Receiver", "Mesh Active");
+  updateOLED("Status: READY", "Press SOS Button", "Mesh Active");
 }
 
 void loop() {
+  // Check External SOS Push Button
+  if (digitalRead(EXTERNAL_SOS_BUTTON) == LOW) {
+    delay(50);
+    if (digitalRead(EXTERNAL_SOS_BUTTON) == LOW) {
+      sendSosAlert();
+      delay(2000);
+    }
+  }
+
   int packetSize = LoRa.parsePacket();
   if (packetSize) {
     String incoming = "";

@@ -11,6 +11,7 @@ Use this document to verify your wiring connections for each node while assembli
 * Display: 1.3" OLED (SH1106)
 * Radio: LoRa SX1278 (433MHz)
 * GPS: NEO-6M / GT-U7 / GY-GPS6MV2
+* Button: External Push Button (SOS Alert Trigger)
 
 ### 🔌 Node A Wiring Diagram
 
@@ -36,8 +37,13 @@ Use this document to verify your wiring connections for each node while assembli
 | :--- | :--- | :--- |
 | VCC | 3.3V or 5V | Power |
 | GND | GND | Ground |
-| **TX** | **GPIO 16** | Hardware Serial2 RX2 (Receives NMEA Data) |
-| **RX** | **GPIO 17** | Hardware Serial2 TX2 (Sends Config Commands) |
+| TX | GPIO 16 | Hardware Serial2 RX2 |
+| RX | GPIO 17 | Hardware Serial2 TX2 |
+
+| External SOS Button | ESP32 Pin | Description |
+| :--- | :--- | :--- |
+| **Pin 1 (Leg A)** | **GPIO 4** | SOS Signal Pin (Active LOW) |
+| **Pin 2 (Leg B)** | **GND** | Ground |
 
 ---
 
@@ -48,6 +54,7 @@ Use this document to verify your wiring connections for each node while assembli
 * Display: 0.96" OLED (SSD1306)
 * Radio: LoRa SX1278 (433MHz)
 * GPS: NEO-6M / GT-U7 / GY-GPS6MV2
+* Button: External Push Button (SOS Alert Trigger)
 
 ### 🔌 Node B Wiring Diagram
 
@@ -73,8 +80,13 @@ Use this document to verify your wiring connections for each node while assembli
 | :--- | :--- | :--- |
 | VCC | 3.3V or 5V | Power |
 | GND | GND | Ground |
-| **TX** | **GPIO 16** | Hardware Serial2 RX2 |
-| **RX** | **GPIO 17** | Hardware Serial2 TX2 |
+| TX | GPIO 16 | Hardware Serial2 RX2 |
+| RX | GPIO 17 | Hardware Serial2 TX2 |
+
+| External SOS Button | ESP32-S3 Pin | Description |
+| :--- | :--- | :--- |
+| **Pin 1 (Leg A)** | **GPIO 4** | SOS Signal Pin (Active LOW) |
+| **Pin 2 (Leg B)** | **GND** | Ground |
 
 ---
 
@@ -85,8 +97,7 @@ Use this document to verify your wiring connections for each node while assembli
 * Display: 0.96" OLED (SSD1306)
 * Radio: LoRa SX1278 (433MHz)
 * GPS: NEO-6M / GT-U7 / GY-GPS6MV2
-
-> ⚠️ **IMPORTANT VOLTAGE WARNING**: LoRa SX1278 VCC **MUST** be connected to Arduino **3.3V pin**!
+* Button: External Push Button (SOS Alert Trigger)
 
 ### 🔌 Node C Wiring Diagram (Arduino Uno / Nano)
 
@@ -112,5 +123,10 @@ Use this document to verify your wiring connections for each node while assembli
 | :--- | :--- | :--- |
 | VCC | 5V or 3.3V | Power |
 | GND | GND | Ground |
-| **TX** | **Pin D4** | SoftwareSerial RX (Receives NMEA Data) |
-| **RX** | **Pin D3** | SoftwareSerial TX (Sends Config Commands) |
+| TX | Pin D4 | SoftwareSerial RX |
+| RX | Pin D3 | SoftwareSerial TX |
+
+| External SOS Button | Arduino Nano Pin | Description |
+| :--- | :--- | :--- |
+| **Pin 1 (Leg A)** | **Pin D5** | SOS Signal Pin (Active LOW) |
+| **Pin 2 (Leg B)** | **GND** | Ground |

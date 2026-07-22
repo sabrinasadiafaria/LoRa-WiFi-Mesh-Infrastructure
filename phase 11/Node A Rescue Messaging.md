@@ -14,8 +14,10 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 
 #define LORA_FREQ 433E6
 
+// External SOS Push Button Pin on Node A
+#define EXTERNAL_SOS_BUTTON 4 // GPIO 4 -> Connect to one side of button, other side to GND
+
 const String MY_NODE_ID = "NODE_A";
-const int SOS_BUTTON_PIN = 0; // ESP32 BOOT button (GPIO 0) as SOS trigger!
 
 float latitude = 23.797810;
 float longitude = 90.449720;
@@ -56,7 +58,7 @@ void sendSosAlert() {
   // Format: SOS:SENDER_ID:LATITUDE:LONGITUDE:PAYLOAD
   String sosPacket = "SOS:" + MY_NODE_ID + ":" + String(latitude, 6) + ":" + String(longitude, 6) + ":MAYDAY INJURED RESCUER";
 
-  // Transmit 3 times for guaranteed delivery
+  // Transmit 3 times for guaranteed emergency delivery
   for (int i = 0; i < 3; i++) {
     LoRa.beginPacket();
     LoRa.print(sosPacket);
@@ -83,13 +85,15 @@ void sendTextMessage(String dest, String messageText) {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(SOS_BUTTON_PIN, INPUT_PULLUP);
+
+  // Configure External SOS Push Button with Internal Pull-up (Active LOW)
+  pinMode(EXTERNAL_SOS_BUTTON, INPUT_PULLUP);
 
   // Initialize Display
   Wire.begin(21, 22);
   display.begin();
 
-  updateOLED("Status: Booting", "Rescue System ON", "Press BOOT for SOS");
+  updateOLED("Status: Booting", "Rescue System ON", "Press Button for SOS");
   delay(1000);
 
   // Initialize LoRa
@@ -102,17 +106,17 @@ void setup() {
   }
 
   Serial.println("Node A - Phase 11 Rescue Messaging & SOS System Ready");
-  Serial.println(">>> PRESS ESP32 BOOT BUTTON (GPIO 0) TO TRIGGER EMERGENCY SOS!");
-  updateOLED("Status: READY", "Press BOOT for SOS", "Mesh Active");
+  Serial.println(">>> PRESS EXTERNAL SOS BUTTON (GPIO 4 to GND) TO TRIGGER EMERGENCY SOS!");
+  updateOLED("Status: READY", "Press SOS Button", "Mesh Active");
 }
 
 void loop() {
-  // 1. Check hardware SOS trigger button (Active LOW)
-  if (digitalRead(SOS_BUTTON_PIN) == LOW) {
-    delay(50); // Debounce
-    if (digitalRead(SOS_BUTTON_PIN) == LOW) {
+  // 1. Check External SOS Push Button (Triggers when pressed to GND)
+  if (digitalRead(EXTERNAL_SOS_BUTTON) == LOW) {
+    delay(50); // Debounce delay
+    if (digitalRead(EXTERNAL_SOS_BUTTON) == LOW) {
       sendSosAlert();
-      delay(2000); // Hold delay
+      delay(2000); // Hold delay to prevent multiple triggers
     }
   }
 
