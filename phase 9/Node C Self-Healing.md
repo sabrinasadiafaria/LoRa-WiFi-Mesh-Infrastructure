@@ -39,23 +39,20 @@ unsigned long lastBroadcastTime = 4000;
 unsigned long lastSendTime = 0;
 int msgIdCounter = 200;
 
-void updateOLED(String statusLine, String lastRx) {
+void updateOLED(String statusLine, String subText) {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
 
   display.setCursor(0, 0);
-  display.println(F("NODE C (Self-Healing)"));
+  display.println(F("--- NODE C MESH ---"));
 
-  display.setCursor(0, 18);
+  display.setCursor(0, 20);
   display.print(F("Status: "));
   display.println(statusLine);
 
-  display.setCursor(0, 36);
-  display.print(F("Last RX/Fwd:"));
-
-  display.setCursor(0, 48);
-  display.println(lastRx);
+  display.setCursor(0, 40);
+  display.println(subText);
 
   display.display();
 }
@@ -152,37 +149,48 @@ void forwardPacket(String src, String dest, int hops, int msgId, String payload)
 void setup() {
   Serial.begin(115200);
   
-  // Power stabilization delay for Arduino Nano
-  delay(1000);
-
-  // 1. Initialize Hardware I2C (A4 = SDA, A5 = SCL)
-  Wire.begin();
+  // Power stabilization delay for Nano
   delay(500);
 
-  // Initialize display matching the working test sketch
+  // STEP 1: Initialize Display
+  Wire.begin();
+  delay(200);
+
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
   }
 
   display.clearDisplay();
   display.display();
-  delay(300);
+  delay(200);
 
-  updateOLED("Booting...", "None");
-  delay(500);
+  // Display Step 1: Display Ready
+  updateOLED("Display Ready...", "Booting Node C");
+  delay(1200);
 
-  // 2. Hardware SPI on Arduino Nano
+  // Display Step 2: Initializing LoRa Radio
+  updateOLED("Init LoRa Radio...", "Frequency 433MHz");
+  delay(800);
+
   SPI.begin();
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
 
   if (!LoRa.begin(LORA_FREQ)) {
     Serial.println(F("LoRa init failed!"));
-    updateOLED("LoRa FAIL!", "Check Pins!");
+    updateOLED("LoRa FAIL!", "Check SPI Wiring!");
     while (1);
   }
 
+  // Display Step 3: LoRa Ready
+  updateOLED("LoRa Ready!", "433MHz Radio ON");
+  delay(1200);
+
+  // Display Step 4: All OK Good To Go!
+  updateOLED("All OK!", "Good to go!");
+  delay(1500);
+
   Serial.println(F("Node C - Arduino Nano Self-Healing Ready"));
-  updateOLED("Mesh Ready", "Waiting...");
+  updateOLED("Mesh Active", "Scanning Routes...");
 }
 
 void loop() {
