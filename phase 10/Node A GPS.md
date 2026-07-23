@@ -27,10 +27,60 @@ float longitude = 0.0;
 int batteryLevel = 98;
 int satellites = 0;
 bool hasGpsFix = false;
-String rawNmeaStatus = "Searching Satellites...";
-String lastRxTelemetry = "No RX Yet";
 
 unsigned long lastGpsBroadcast = 0;
+
+// Neighbor Tracking System
+struct Neighbor {
+  String id;
+  unsigned long lastSeen;
+  int rssi;
+  bool active;
+};
+
+Neighbor neighbors[5];
+int neighborCount = 0;
+
+void updateNeighbor(String nodeID, int rssi) {
+  unsigned long now = millis();
+  for (int i = 0; i < neighborCount; i++) {
+    if (neighbors[i].id == nodeID) {
+      neighbors[i].lastSeen = now;
+      neighbors[i].rssi = rssi;
+      neighbors[i].active = true;
+      return;
+    }
+  }
+  if (neighborCount < 5) {
+    neighbors[neighborCount].id = nodeID;
+    neighbors[neighborCount].lastSeen = now;
+    neighbors[neighborCount].rssi = rssi;
+    neighbors[neighborCount].active = true;
+    neighborCount++;
+  }
+}
+
+void checkNeighborTimeouts() {
+  unsigned long now = millis();
+  for (int i = 0; i < neighborCount; i++) {
+    if (now - neighbors[i].lastSeen > 15000) { // 15s timeout threshold
+      neighbors[i].active = false;
+    }
+  }
+}
+
+String getConnectedNodesString() {
+  String conn = "";
+  for (int i = 0; i < neighborCount; i++) {
+    if (neighbors[i].active) {
+      if (conn.length() > 0) conn += ", ";
+      String shortName = neighbors[i].id;
+      shortName.replace("NODE_", "");
+      conn += shortName;
+    }
+  }
+  return conn.length() > 0 ? conn : "None";
+}
 
 // Helper to parse NMEA coordinate format (DDMM.MMMM to Decimal Degrees)
 float parseNmeaCoord(String val, String dir) {
@@ -66,7 +116,7 @@ String getField(String data, char separator, int index) {
 void parseNmeaSentence(String line) {
   line.trim();
   
-  // Parse $GPRMC or $GNRMC (Recommended Minimum Navigation Data)
+  // Parse $GPRMC or $GNRMC (Raw GPS Location)
   if (line.startsWith("$GPRMC") || line.startsWith("$GNRMC")) {
     String status = getField(line, ',', 2); // 'A' = Valid, 'V' = Warning
     if (status == "A") {
@@ -82,11 +132,9 @@ void parseNmeaSentence(String line) {
         latitude = parsedLat;
         longitude = parsedLon;
         hasGpsFix = true;
-        rawNmeaStatus = "GPS FIX LOCKED";
       }
     } else {
       hasGpsFix = false;
-      rawNmeaStatus = "Searching Satellites...";
     }
   }
   // Parse $GPGGA or $GNGGA (Satellite Count)
@@ -102,7 +150,7 @@ void updateOLED() {
   display.clearBuffer();
   display.setFont(u8g2_font_ncenB08_tr);
 
-  display.drawStr(0, 10, "--- NODE A (NEO-6M) ---");
+  display.drawStr(0, 10, "--- NODE A (RAW GPS) ---");
   
   if (hasGpsFix) {
     display.setCursor(0, 24);
@@ -126,11 +174,11 @@ void updateOLED() {
     display.print("Sats in view: ");
     display.print(satellites);
     display.setCursor(0, 48);
-    display.print("Bench Fallback Lat/Lon");
+    display.print("No Raw FIX Yet");
   }
 
   display.setCursor(0, 60);
-  display.print(lastRxTelemetry);
+  display.print("Conn: " + getConnectedNodesString());
   
   display.sendBuffer();
 }
@@ -146,15 +194,11 @@ void readGpsSensor() {
 
 void broadcastGpsTelemetry() {
   unsigned long uptimeSec = millis() / 1000;
-  
-  // Use real GPS coordinates if locked, otherwise bench fallback coordinates
-  float txLat = hasGpsFix ? latitude : 23.797700;
-  float txLon = hasGpsFix ? longitude : 90.449600;
 
   // Packet Format: GPS:SENDER_ID:LATITUDE:LONGITUDE:BATTERY:UPTIME
   String telemetryPacket = "GPS:" + MY_NODE_ID + ":" + 
-                          String(txLat, 6) + ":" + 
-                          String(txLon, 6) + ":" + 
+                          String(latitude, 6) + ":" + 
+                          String(longitude, 6) + ":" + 
                           String(batteryLevel) + ":" + 
                           String(uptimeSec);
 
@@ -162,7 +206,7 @@ void broadcastGpsTelemetry() {
   LoRa.print(telemetryPacket);
   LoRa.endPacket();
 
-  Serial.println("TX GPS Telemetry -> " + telemetryPacket);
+  Serial.println("TX Raw GPS Telemetry -> " + telemetryPacket);
   updateOLED();
 }
 
@@ -188,11 +232,11 @@ void setup() {
     while (1);
   }
 
-  Serial.println("Node A (ESP32 + NEO-6M GPS) Ready");
+  Serial.println("Node A (ESP32 + RAW NEO-6M GPS) Ready");
 }
 
 void loop() {
-  // 1. Read real GPS NMEA stream
+  // 1. Read real raw GPS NMEA stream
   readGpsSensor();
 
   // 2. Listen for incoming LoRa GPS Telemetry
@@ -210,13 +254,18 @@ void loop() {
       int secondColon = incoming.indexOf(':', firstColon + 1);
       if (firstColon != -1 && secondColon != -1) {
         String senderId = incoming.substring(firstColon + 1, secondColon);
-        lastRxTelemetry = "RX: " + senderId + " (" + String(rssi) + "dBm)";
-        updateOLED();
+        if (senderId != MY_NODE_ID) {
+          updateNeighbor(senderId, rssi);
+          updateOLED();
+        }
       }
     }
   }
 
-  // 3. Periodic Broadcast
+  // 3. Timeout check for stale active neighbors
+  checkNeighborTimeouts();
+
+  // 4. Periodic Broadcast
   if (millis() - lastGpsBroadcast > GPS_BROADCAST_INTERVAL) {
     broadcastGpsTelemetry();
     lastGpsBroadcast = millis();

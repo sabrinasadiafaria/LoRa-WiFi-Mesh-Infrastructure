@@ -30,9 +30,60 @@ float longitude = 0.0;
 int batteryLevel = 88;
 int satellites = 0;
 bool hasGpsFix = false;
-String lastRxTelemetry = "No RX Yet";
 
 unsigned long lastGpsBroadcast = 4000; // Offset start by 4s to prevent RF collisions
+
+// Neighbor Tracking System
+struct Neighbor {
+  String id;
+  unsigned long lastSeen;
+  int rssi;
+  bool active;
+};
+
+Neighbor neighbors[5];
+int neighborCount = 0;
+
+void updateNeighbor(String nodeID, int rssi) {
+  unsigned long now = millis();
+  for (int i = 0; i < neighborCount; i++) {
+    if (neighbors[i].id == nodeID) {
+      neighbors[i].lastSeen = now;
+      neighbors[i].rssi = rssi;
+      neighbors[i].active = true;
+      return;
+    }
+  }
+  if (neighborCount < 5) {
+    neighbors[neighborCount].id = nodeID;
+    neighbors[neighborCount].lastSeen = now;
+    neighbors[neighborCount].rssi = rssi;
+    neighbors[neighborCount].active = true;
+    neighborCount++;
+  }
+}
+
+void checkNeighborTimeouts() {
+  unsigned long now = millis();
+  for (int i = 0; i < neighborCount; i++) {
+    if (now - neighbors[i].lastSeen > 15000) { // 15s timeout threshold
+      neighbors[i].active = false;
+    }
+  }
+}
+
+String getConnectedNodesString() {
+  String conn = "";
+  for (int i = 0; i < neighborCount; i++) {
+    if (neighbors[i].active) {
+      if (conn.length() > 0) conn += ", ";
+      String shortName = neighbors[i].id;
+      shortName.replace("NODE_", "");
+      conn += shortName;
+    }
+  }
+  return conn.length() > 0 ? conn : "None";
+}
 
 // Helper to parse NMEA coordinate format (DDMM.MMMM to Decimal Degrees)
 float parseNmeaCoord(String val, String dir) {
@@ -104,7 +155,7 @@ void updateOLED() {
   display.setTextSize(1);
 
   display.setCursor(0, 0);
-  display.println("--- NODE C (NEO-M8N) ---");
+  display.println("--- NODE C (RAW GPS) ---");
 
   if (hasGpsFix) {
     display.setCursor(0, 14);
@@ -128,11 +179,11 @@ void updateOLED() {
     display.print("Sats in view: ");
     display.println(satellites);
     display.setCursor(0, 38);
-    display.println("Bench Fallback Active");
+    display.println("No Raw FIX Yet");
   }
 
   display.setCursor(0, 52);
-  display.println(lastRxTelemetry);
+  display.println("Conn: " + getConnectedNodesString());
 
   display.display();
 }
@@ -149,14 +200,10 @@ void readGpsSensor() {
 void broadcastGpsTelemetry() {
   unsigned long uptimeSec = millis() / 1000;
 
-  // Use real GPS coordinates if locked, otherwise bench fallback coordinates
-  float txLat = hasGpsFix ? latitude : 23.798100;
-  float txLon = hasGpsFix ? longitude : 90.450100;
-
   // Packet Format: GPS:SENDER_ID:LATITUDE:LONGITUDE:BATTERY:UPTIME
   String telemetryPacket = "GPS:" + MY_NODE_ID + ":" + 
-                          String(txLat, 6) + ":" + 
-                          String(txLon, 6) + ":" + 
+                          String(latitude, 6) + ":" + 
+                          String(longitude, 6) + ":" + 
                           String(batteryLevel) + ":" + 
                           String(uptimeSec);
 
@@ -164,7 +211,7 @@ void broadcastGpsTelemetry() {
   LoRa.print(telemetryPacket);
   LoRa.endPacket();
 
-  Serial.println("TX Telemetry -> " + telemetryPacket);
+  Serial.println("TX Raw GPS Telemetry -> " + telemetryPacket);
   updateOLED();
 }
 
@@ -188,11 +235,11 @@ void setup() {
     while (1);
   }
 
-  Serial.println("Node C (ESP32 + NEO-M8N GPS) Ready");
+  Serial.println("Node C (ESP32 + RAW NEO-M8N GPS) Ready");
 }
 
 void loop() {
-  // 1. Read real GPS stream
+  // 1. Read real raw GPS stream
   readGpsSensor();
 
   // 2. Process incoming packets
@@ -210,13 +257,18 @@ void loop() {
       int secondColon = incoming.indexOf(':', firstColon + 1);
       if (firstColon != -1 && secondColon != -1) {
         String senderId = incoming.substring(firstColon + 1, secondColon);
-        lastRxTelemetry = "RX: " + senderId + " (" + String(rssi) + "dBm)";
-        updateOLED();
+        if (senderId != MY_NODE_ID) {
+          updateNeighbor(senderId, rssi);
+          updateOLED();
+        }
       }
     }
   }
 
-  // 3. Broadcast telemetry
+  // 3. Timeout check for stale active neighbors
+  checkNeighborTimeouts();
+
+  // 4. Broadcast telemetry
   if (millis() - lastGpsBroadcast > GPS_BROADCAST_INTERVAL) {
     broadcastGpsTelemetry();
     lastGpsBroadcast = millis();
