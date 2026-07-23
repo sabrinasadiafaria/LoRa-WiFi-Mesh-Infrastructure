@@ -1,31 +1,3 @@
-# Phase 10 — Node B (ESP32 + LoRa SX1278 + NEO-M8N GPS)
-
-## 📌 Wiring Pinout Table for Node B
-
-| Module Component | Module Pin | ESP32 Pin | Description |
-| :--- | :--- | :--- | :--- |
-| **LoRa SX1278** | VCC | **3.3V** | Power (Do NOT use 5V for LoRa) |
-| | GND | GND | Ground |
-| | SCK | **GPIO 18** | SPI Clock |
-| | MISO | **GPIO 19** | SPI Master In |
-| | MOSI | **GPIO 23** | SPI Master Out |
-| | NSS / CS | **GPIO 5** | SPI Chip Select |
-| | RST | **GPIO 14** | Reset Pin |
-| | DIO0 | **GPIO 26** | Hardware Interrupt |
-| **0.96" OLED** | VCC | **3.3V or 5V** | Display Power |
-| | GND | GND | Display Ground |
-| | SDA | **GPIO 21** | I2C Data |
-| | SCL | **GPIO 22** | I2C Clock |
-| **NEO-M8N GPS** | VCC | **3.3V or 5V** | GPS Power |
-| | GND | GND | GPS Ground |
-| | **TX** | **GPIO 16 (RX2)** | Connect GPS TX to ESP32 RX2 |
-| | **RX** | **GPIO 17 (TX2)** | Connect GPS RX to ESP32 TX2 |
-
----
-
-## 💻 Arduino C++ Sketch Code
-
-```cpp
 #include <SPI.h>
 #include <LoRa.h>
 #include <Wire.h>
@@ -250,4 +222,3 @@ void loop() {
     lastGpsBroadcast = millis();
   }
 }
-```
