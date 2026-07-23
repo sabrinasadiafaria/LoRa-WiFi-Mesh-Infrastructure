@@ -1,8 +1,37 @@
+# Phase 10 — Node A (ESP32 + LoRa SX1278 + NEO-6M GPS)
+
+## 📌 Wiring Pinout Table for Node A
+
+| Module Component | Module Pin | ESP32 Pin | Description |
+| :--- | :--- | :--- | :--- |
+| **LoRa SX1278** | VCC | **3.3V** | Power (Do NOT use 5V for LoRa) |
+| | GND | GND | Ground |
+| | SCK | **GPIO 18** | SPI Clock |
+| | MISO | **GPIO 19** | SPI Master In |
+| | MOSI | **GPIO 23** | SPI Master Out |
+| | NSS / CS | **GPIO 5** | SPI Chip Select |
+| | RST | **GPIO 14** | Reset Pin |
+| | DIO0 | **GPIO 26** | Hardware Interrupt |
+| **1.3" / 0.96" OLED** | VCC | **3.3V or 5V** | Display Power |
+| | GND | GND | Display Ground |
+| | SDA | **GPIO 21** | I2C Data |
+| | SCL | **GPIO 22** | I2C Clock |
+| **NEO-6M GPS** | VCC | **3.3V or 5V** | GPS Power |
+| | GND | GND | GPS Ground |
+| | **TX** | **GPIO 16 (RX2)** | Connect GPS TX to ESP32 RX2 |
+| | **RX** | **GPIO 17 (TX2)** | Connect GPS RX to ESP32 TX2 |
+
+---
+
+## 💻 Arduino C++ Sketch Code
+
+```cpp
 #include <SPI.h>
 #include <LoRa.h>
 #include <Wire.h>
 #include <U8g2lib.h>
 
+// SH1106 1.3" OLED (Change to U8G2_SSD1306_128X64_NONAME_F_HW_I2C if using SSD1306 0.96")
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 
 #define LORA_SCK   18
@@ -27,6 +56,7 @@ int batteryLevel = 98;
 int satellites = 0;
 bool hasGpsFix = false;
 String rawNmeaStatus = "Searching Satellites...";
+String lastRxTelemetry = "No RX Yet";
 
 unsigned long lastGpsBroadcast = 0;
 
@@ -64,7 +94,7 @@ String getField(String data, char separator, int index) {
 void parseNmeaSentence(String line) {
   line.trim();
   
-  // Parse $GPRMC or $GNRMC (Recommended Minimum Navigation Information)
+  // Parse $GPRMC or $GNRMC (Recommended Minimum Navigation Data)
   if (line.startsWith("$GPRMC") || line.startsWith("$GNRMC")) {
     String status = getField(line, ',', 2); // 'A' = Valid, 'V' = Warning
     if (status == "A") {
@@ -84,10 +114,10 @@ void parseNmeaSentence(String line) {
       }
     } else {
       hasGpsFix = false;
-      rawNmeaStatus = "No Satellite Fix Yet";
+      rawNmeaStatus = "Searching Satellites...";
     }
   }
-  // Parse $GPGGA or $GNGGA (Global Positioning System Fix Data)
+  // Parse $GPGGA or $GNGGA (Satellite Count)
   else if (line.startsWith("$GPGGA") || line.startsWith("$GNGGA")) {
     String satsStr = getField(line, ',', 7);
     if (satsStr.length() > 0) {
@@ -96,35 +126,39 @@ void parseNmeaSentence(String line) {
   }
 }
 
-void updateOLED(float lat, float lon, int bat, bool fix, int sats) {
+void updateOLED() {
   display.clearBuffer();
   display.setFont(u8g2_font_ncenB08_tr);
 
-  display.drawStr(0, 10, "--- NODE A (HARDWARE GPS) ---");
+  display.drawStr(0, 10, "--- NODE A (NEO-6M) ---");
   
-  if (fix) {
-    display.setCursor(0, 26);
+  if (hasGpsFix) {
+    display.setCursor(0, 24);
     display.print("Lat: ");
-    display.print(lat, 5);
+    display.print(latitude, 5);
 
-    display.setCursor(0, 40);
+    display.setCursor(0, 36);
     display.print("Lon: ");
-    display.print(lon, 5);
+    display.print(longitude, 5);
 
-    display.setCursor(0, 56);
-    display.print("Bat: ");
-    display.print(bat);
-    display.print("% | Sat: ");
-    display.print(sats);
+    display.setCursor(0, 48);
+    display.print("Sats: ");
+    display.print(satellites);
+    display.print(" | Bat: ");
+    display.print(batteryLevel);
+    display.print("%");
   } else {
-    display.setCursor(0, 28);
+    display.setCursor(0, 24);
     display.print("GPS: Searching Sats...");
-    display.setCursor(0, 44);
+    display.setCursor(0, 36);
     display.print("Sats in view: ");
-    display.print(sats);
-    display.setCursor(0, 58);
-    display.print("Place near window/sky");
+    display.print(satellites);
+    display.setCursor(0, 48);
+    display.print("Bench Fallback Lat/Lon");
   }
+
+  display.setCursor(0, 60);
+  display.print(lastRxTelemetry);
   
   display.sendBuffer();
 }
@@ -141,10 +175,14 @@ void readGpsSensor() {
 void broadcastGpsTelemetry() {
   unsigned long uptimeSec = millis() / 1000;
   
-  // Format: GPS:SENDER_ID:LATITUDE:LONGITUDE:BATTERY:UPTIME
+  // Use real GPS coordinates if locked, otherwise bench fallback coordinates
+  float txLat = hasGpsFix ? latitude : 23.797700;
+  float txLon = hasGpsFix ? longitude : 90.449600;
+
+  // Packet Format: GPS:SENDER_ID:LATITUDE:LONGITUDE:BATTERY:UPTIME
   String telemetryPacket = "GPS:" + MY_NODE_ID + ":" + 
-                          String(latitude, 6) + ":" + 
-                          String(longitude, 6) + ":" + 
+                          String(txLat, 6) + ":" + 
+                          String(txLon, 6) + ":" + 
                           String(batteryLevel) + ":" + 
                           String(uptimeSec);
 
@@ -153,20 +191,20 @@ void broadcastGpsTelemetry() {
   LoRa.endPacket();
 
   Serial.println("TX GPS Telemetry -> " + telemetryPacket);
-  updateOLED(latitude, longitude, batteryLevel, hasGpsFix, satellites);
+  updateOLED();
 }
 
 void setup() {
   Serial.begin(115200);
 
-  // Initialize GPS Hardware Serial2 at 9600 baud (Standard Neo-6M baud rate)
+  // Initialize GPS Hardware Serial2 at 9600 baud
   Serial2.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
 
   // STEP 1: Initialize Display
   Wire.begin(21, 22);
   display.begin();
 
-  updateOLED(0.0, 0.0, batteryLevel, false, 0);
+  updateOLED();
   delay(1000);
 
   // STEP 2: Initialize LoRa
@@ -178,14 +216,14 @@ void setup() {
     while (1);
   }
 
-  Serial.println("Node A - Phase 10 Hardware GPS Module Ready");
+  Serial.println("Node A (ESP32 + NEO-6M GPS) Ready");
 }
 
 void loop() {
-  // 1. Read real GPS stream from hardware Serial2
+  // 1. Read real GPS NMEA stream
   readGpsSensor();
 
-  // 2. Receive incoming GPS Telemetry packets from other nodes
+  // 2. Listen for incoming LoRa GPS Telemetry
   int packetSize = LoRa.parsePacket();
   if (packetSize) {
     String incoming = "";
@@ -195,13 +233,21 @@ void loop() {
     int rssi = LoRa.packetRssi();
 
     if (incoming.startsWith("GPS:")) {
-      Serial.println("RX Telemetry [RSSI " + String(rssi) + "dBm]: " + incoming);
+      Serial.println("RX Telemetry [" + String(rssi) + "dBm]: " + incoming);
+      int firstColon = incoming.indexOf(':');
+      int secondColon = incoming.indexOf(':', firstColon + 1);
+      if (firstColon != -1 && secondColon != -1) {
+        String senderId = incoming.substring(firstColon + 1, secondColon);
+        lastRxTelemetry = "RX: " + senderId + " (" + String(rssi) + "dBm)";
+        updateOLED();
+      }
     }
   }
 
-  // 3. Broadcast GPS Telemetry periodically
+  // 3. Periodic Broadcast
   if (millis() - lastGpsBroadcast > GPS_BROADCAST_INTERVAL) {
     broadcastGpsTelemetry();
     lastGpsBroadcast = millis();
   }
 }
+```
