@@ -1,0 +1,4 @@
+# Recorded NMEA fixture
+
+Paste ~2 minutes of raw GPS serial output here during Phase 0 Test 3.
+Used by gps_layer.h replay mode for indoor demo rehearsal.
