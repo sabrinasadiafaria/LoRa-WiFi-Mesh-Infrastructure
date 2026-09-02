@@ -1,73 +1,64 @@
 # BUILD_AND_FLASH
 
-How to assemble a `development/` node sketch in the Arduino IDE from the Markdown tab files.
-
 ## Prerequisites
 
 - **Arduino IDE** 2.x
 - **ESP32 board package** (Espressif) — Boards Manager → "esp32". Bundles `WiFi`, `WebServer`,
-  `DNSServer`, `HardwareSerial`, `esp_task_wdt` (no extra install for Phases 4–6).
+  `DNSServer`, `HardwareSerial`, `esp_task_wdt`, so Phases 4–6 need no extra installs.
 - **Libraries** (Library Manager):
   | Library | Author | Used by |
   |---|---|---|
   | `LoRa` | Sandeep Mistry | all nodes |
-  | `U8g2` | oliver kraus | nodes with an SH1106 1.3" OLED |
-  | `Adafruit GFX Library` | Adafruit | nodes with an SSD1306 0.96" OLED |
-  | `Adafruit SSD1306` | Adafruit | nodes with an SSD1306 0.96" OLED |
+  | `U8g2` | oliver kraus | nodes with a 1.3" SH1106 OLED |
+  | `Adafruit GFX Library` | Adafruit | nodes with a 0.96" SSD1306 OLED |
+  | `Adafruit SSD1306` | Adafruit | nodes with a 0.96" SSD1306 OLED |
 - **Board setting:** "ESP32 Dev Module", 240 MHz, Flash 4 MB, Partition "Default 4MB with spiffs".
 
-## Assembling a sketch
+## Flashing a node
 
-Each `development/` node is one Arduino "sketch" made of **multiple tabs**. The main tab is the
-node file (`phase N/Node X.md`); the other tabs are the shared `*.h.md` modules from the same
-phase folder.
+Every node sketch in `development/phase N/` is a **complete standalone program** — the same
+convention as the root `phase 10/` and `phase 11/` files.
 
-1. Create a new sketch. Name it e.g. `Node_A`.
-2. For each shared module the phase lists, use the IDE's **⋮ → New Tab** and name it **exactly**
-   as the file's base name **including `.h`** — e.g. tab name `radio_layer.h`. Paste the entire
-   contents of `phase N/radio_layer.h.md` into it.
-3. Paste the node file's code into the main `.ino` tab.
-4. The per-node switches (`NODE_IS_A`, `OLED_SH1106`, …) are already at the top of each node
-   file — change them only if your hardware differs.
-5. Compile & upload. Repeat per node.
+1. Open `phase N/Node A.md`, select all, copy.
+2. Arduino IDE → new sketch → select all → paste over it.
+3. Choose the board and port, Upload.
+4. Repeat with `Node B.md` and `Node C.md` on the other two boards.
 
-The `.md` files contain **raw code only** — no Markdown fences or headings — so you can select
-all and paste. (This follows the convention set by the root `phase 10/` and `phase 11/` files.)
+The `.md` files contain raw code only — no Markdown fences or headings — so a straight
+select-all-paste works.
 
-### Tabs per phase
-
-| Phase | Shared tabs (in addition to the main node tab) |
-|---|---|
-| 1 | `config.h`, `scheduler.h`, `packet.h`, `radio_layer.h`, `neighbors.h`, `oled_ui.h`, `node_core.h` |
-| 2 | phase-1 set + `mesh_core.h` |
-| 3 | phase-2 set + `gps_layer.h`, `app_sos.h`, `app_msg.h` |
-| 4 | phase-3 set + `portal_layer.h`, `portal_pages.h`  (Node A & C only) |
-| 5 | Gateway node: phase-2 set + `serial_bridge.h`; the Pi side is separate (`pi/README.md`) |
-| 6 | Rover node: phase-3 set + `motor_layer.h`, `ultrasonic_layer.h` |
-
-Only the **main `.ino` tab** may define `setup()` / `loop()`, and only it includes `node_core.h`
-— the shared headers define globals, so including them from a second `.cpp` tab would produce
-duplicate symbols.
+**Do not mix phases across nodes.** All three boards must run the same phase, or they will not
+understand each other's packets (the protocol version is checked and mismatches are dropped).
 
 ## Per-node roles
 
-| Node | id | OLED | GPS | Portal | Extra |
+| Node | id | Display | GPS | Portal | Extra |
 |---|---|---|---|---|---|
-| Node A | `A` | SH1106 (U8g2) | yes | yes | SOS button GPIO 4 |
-| Node B | `B` | SSD1306 | optional | no | relay; SOS button GPIO 4 |
-| Node C | `C` | SSD1306 | yes | yes | SOS button GPIO 4 |
-| Gateway | `GW` | optional | no | no | USB serial framing to the Pi |
-| Rover | `RV` | optional | yes | no | L298N + HC-SR04, separate motor battery |
+| Node A | `A` | SH1106 1.3" | yes | yes (Phase 4) | SOS button GPIO 4 |
+| Node B | `B` | SSD1306 0.96" | optional | no | relay; SOS button GPIO 4 |
+| Node C | `C` | SSD1306 0.96" | yes | yes (Phase 4) | SOS button GPIO 4 |
+| Gateway | `GW` | optional | no | no | USB serial bridge to the Pi (Phase 5) |
+| Rover | `RV` | optional | yes | no | L298N + HC-SR04, separate motor battery (Phase 6) |
 
-Wiring: see `../Hardware_Connections.md` and `docs/WIRING.md`.
+Wiring: `../../Hardware_Connections.md` and `WIRING.md`.
+
+## Editing shared constants
+
+Because each node is a standalone file, the tunable block (pins, `LORA_SF`, `LORA_TXPOWER`,
+timeouts, table sizes) is repeated near the top of all three sketches. **If you change one,
+change all three** — mismatched radio settings mean the nodes cannot hear each other at all.
+
+The block to keep in sync starts at `// ------- identity -------` and ends at
+`// ------- sizes -------`.
 
 ## Sanity check after flashing
 
 Every node prints on boot (115200 baud):
 ```
-[boot] Node <id> fw v<n>  heap=<bytes>
-[radio] LoRa OK  SF<n> BW125 CRC=on sync=0x2A
+[boot] Node A fw v1  heap=298372
+[radio] LoRa OK  SF8 BW125 CRC=on sync=0x2A pwr=17dBm
+[boot] ready. type 'h' for commands.
 ```
-If `[radio] LoRa FAIL` — check SPI wiring (SCK18 MISO19 MOSI23 SS5 RST14 DIO0 26) and that LoRa
-VCC is on **3.3 V, not 5 V**. The new firmware retries and keeps the watchdog fed instead of
-hanging.
+If you see `[radio] LoRa FAIL` — check the SPI wiring (SCK 18, MISO 19, MOSI 23, SS 5, RST 14,
+DIO0 26) and that LoRa VCC is on **3.3 V, not 5 V**. The new firmware retries every 5 s and keeps
+the watchdog fed instead of hanging, so the display stays readable while you fix it.

@@ -29,21 +29,24 @@ development/
 └── pi/              Python service + web dashboard (used from phase 5)
 ```
 
-Each `phase N/` folder is self-contained: shared `*.h.md` Arduino tabs, thin per-node main
-sketches, and a `README.md` with the build steps, test procedure and completion criteria for
-that phase. Later phases add tabs; they don't fork the earlier ones.
+Each `phase N/` folder holds one **complete standalone sketch per node** plus a `README.md` with
+the build steps, test procedure and completion criteria for that phase. Each phase's sketches
+carry everything the previous phase had, plus that phase's new capability — so you always flash
+exactly one file per board.
 
 ## Conventions (kept from the existing project)
 
-- **Arduino IDE copy-paste style.** Firmware ships as Markdown files containing raw code — no
-  fences, no headings — so a file can be pasted straight into a tab.
-- Shared modules are `*.h.md` → paste into a **new tab named exactly** `config.h`, `packet.h`, …
-- Per-device sketches (`Node A.md`, …) are the main `.ino` tab and contain only two `#define`s
-  plus `setup`/`loop`. **All three nodes share byte-identical tabs.**
+- **Complete copy-paste sketches.** Every `Node X.md` is a whole program: select all, paste into
+  the Arduino IDE, upload. Raw code only — no Markdown fences or headings. Same convention as the
+  root `phase 10/` and `phase 11/` files.
+- **All three boards must run the same phase.** The protocol version is checked on every packet,
+  so mixed phases simply drop each other's frames.
 - **3× identical ESP32.** No ESP32-S3, no Arduino Nano (the old Node C on a 2 KB ATmega was the
   source of a long tail of stability patches).
 - **No `delay()` in `loop()`. No `String` in the packet hot path.**
 - Pin assignments follow `../Hardware_Connections.md`.
+- The tunable block (pins, radio settings, timeouts) is repeated at the top of each node sketch —
+  **if you change one, change all three.**
 
 ## Build & run order
 
