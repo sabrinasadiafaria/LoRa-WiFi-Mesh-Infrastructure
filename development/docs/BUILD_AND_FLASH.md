@@ -19,30 +19,35 @@ How to assemble a `development/` node sketch in the Arduino IDE from the Markdow
 ## Assembling a sketch
 
 Each `development/` node is one Arduino "sketch" made of **multiple tabs**. The main tab is the
-node file (`firmware/nodes/Node_X.md`); the other tabs are the shared modules it needs.
+node file (`phase N/Node X.md`); the other tabs are the shared `*.h.md` modules from the same
+phase folder.
 
 1. Create a new sketch. Name it e.g. `Node_A`.
-2. For each shared module the node needs, use the IDE's **⋮ → New Tab** and name it **exactly**
-   as the file's base name **including `.h`** — e.g. tab name `radio_layer.h`. Paste the code
-   block from `firmware/common/radio_layer.h.md` into it.
+2. For each shared module the phase lists, use the IDE's **⋮ → New Tab** and name it **exactly**
+   as the file's base name **including `.h`** — e.g. tab name `radio_layer.h`. Paste the entire
+   contents of `phase N/radio_layer.h.md` into it.
 3. Paste the node file's code into the main `.ino` tab.
-4. In the main tab, set the per-node config `#define`s at the top (node id, OLED type, whether
-   this node has GPS / a portal). Each node file documents its switches.
-5. Compile & upload.
+4. The per-node switches (`NODE_IS_A`, `OLED_SH1106`, …) are already at the top of each node
+   file — change them only if your hardware differs.
+5. Compile & upload. Repeat per node.
 
-### Tab order per phase
+The `.md` files contain **raw code only** — no Markdown fences or headings — so you can select
+all and paste. (This follows the convention set by the root `phase 10/` and `phase 11/` files.)
 
-| Phase | Tabs required (create in this order) |
+### Tabs per phase
+
+| Phase | Shared tabs (in addition to the main node tab) |
 |---|---|
-| 1 | `config.h`, `scheduler.h`, `packet.h`, `radio_layer.h`, `oled_ui.h` + main |
-| 2 | + `mesh_core.h` |
-| 3 | + `gps_layer.h`, `app_sos.h`, `app_msg.h` |
-| 4 | + `portal_layer.h`, `portal_pages.h`  (Node A & C only) |
-| 5 | Gateway node: phase-2 tab set + main; Pi side is separate (`pi/README.md`) |
-| 6 | Rover node: phase-3 tab set + `motor_layer.h`, `ultrasonic_layer.h` + main |
+| 1 | `config.h`, `scheduler.h`, `packet.h`, `radio_layer.h`, `neighbors.h`, `oled_ui.h`, `node_core.h` |
+| 2 | phase-1 set + `mesh_core.h` |
+| 3 | phase-2 set + `gps_layer.h`, `app_sos.h`, `app_msg.h` |
+| 4 | phase-3 set + `portal_layer.h`, `portal_pages.h`  (Node A & C only) |
+| 5 | Gateway node: phase-2 set + `serial_bridge.h`; the Pi side is separate (`pi/README.md`) |
+| 6 | Rover node: phase-3 set + `motor_layer.h`, `ultrasonic_layer.h` |
 
-Tabs are `#include`d by filename from the main sketch (`#include "radio_layer.h"`), so the names
-must match. The `.md` wrapper is only for the repo — never paste the Markdown fences or headings.
+Only the **main `.ino` tab** may define `setup()` / `loop()`, and only it includes `node_core.h`
+— the shared headers define globals, so including them from a second `.cpp` tab would produce
+duplicate symbols.
 
 ## Per-node roles
 
