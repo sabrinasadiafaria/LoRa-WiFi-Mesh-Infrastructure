@@ -20,14 +20,19 @@ Pi command center, and the autonomous rover.
 development/
 ├── docs/            plan, packet spec, per-phase design notes, test reports
 ├── fixtures/        recorded GPS NMEA for indoor demo rehearsal
-├── phase 1/         shared core: radio + packet + OLED + neighbours   <- YOU ARE HERE
-├── phase 2/         unified mesh: routing + multi-hop + self-healing
-├── phase 3/         GPS + SOS + messaging
-├── phase 4/         Wi-Fi captive portal
+├── phase 1/         shared core: radio + packet + OLED + neighbours
+├── phase 2/         hybrid location: GPS module + phone via captive portal
+├── phase 3/         unified mesh: routing + multi-hop + self-healing
+├── phase 4/         SOS button + rescue messaging
 ├── phase 5/         gateway node + Raspberry Pi command center
 ├── phase 6/         autonomous rover
 └── pi/              Python service + web dashboard (used from phase 5)
 ```
+
+> Phase 2 was inserted after the original plan was written: the user asked for hybrid
+> GPS-module / phone location earlier than the plan's Phase 3+4, so location and the captive
+> portal moved forward and mesh routing moved back one slot. `docs/PLAN.md` still shows the
+> original numbering.
 
 Each `phase N/` folder holds one **complete standalone sketch per node** plus a `README.md` with
 the build steps, test procedure and completion criteria for that phase. Each phase's sketches
@@ -54,9 +59,9 @@ exactly one file per board.
 |---|---|---|
 | 0 | Bench-test the existing root `phase 9` + `phase 10` sketches | `docs/PHASE0_FINDINGS.md` filled in |
 | 1 | Shared core — heartbeat, neighbours, CRC, watchdog | 60-min soak, heap flat |
-| 2 | Unified mesh — routing, multi-hop, self-healing | A→C via B; kill/restore B |
-| 3 | GPS + SOS + messaging with real data | SOS shows live coords, screen clears |
-| 4 | Wi-Fi captive portal | portal auto-pops on a real phone |
+| 2 | Hybrid location — GPS module + phone via captive portal | portal works on a phone; Wi-Fi and LoRa coexist |
+| 3 | Unified mesh — routing, multi-hop, self-healing | A→C via B; kill/restore B |
+| 4 | SOS button + rescue messaging | SOS shows live coords, screen clears |
 | 5 | Gateway + Raspberry Pi command center + dashboard | every event visible on the map |
 | 6 | Autonomous rover + mobile relay | 5 min collision-free; relay restores A↔C |
 | 7 | Integration, tuning, field/range test | end-to-end scenario passes 3× |
@@ -70,9 +75,9 @@ Detailed flashing instructions: `docs/BUILD_AND_FLASH.md`.
 |---|---|
 | 0 Audit & bench test | ⬜ awaiting hardware run |
 | 1 Shared core firmware | 🟡 code written — awaiting hardware verification |
-| 2 Unified mesh | ⬜ not started |
-| 3 GPS + SOS + messaging | ⬜ not started |
-| 4 Wi-Fi captive portal | ⬜ not started |
+| 2 Hybrid location + captive portal | 🟡 code written — awaiting hardware verification |
+| 3 Unified mesh | ⬜ not started |
+| 4 SOS + messaging | ⬜ not started |
 | 5 Pi command center | ⬜ not started |
 | 6 Autonomous rover | ⬜ not started |
 | 7 Integration & field test | ⬜ not started |

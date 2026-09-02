@@ -47,7 +47,7 @@ v1|SOS|A|*|41|4|23.797810,90.449720,MAYDAY INJURED RESCUER|7c
 | `HB`   | Phase 1 | `*` | `<uptime_s>,<free_heap>,<fw_ver>` | no (TTL 0) | Heartbeat / neighbour keepalive. Every N s (Phase 0 decides N). |
 | `RT`   | Phase 2 | `*` | `<dest>,<hops>;<dest>,<hops>;…` | no (TTL 0) | Distance-vector route advertisement. Split-horizon: a route is omitted from the advert sent toward its own next-hop. |
 | `DATA` | Phase 2 | node | `<application bytes>` | yes | Generic end-to-end delivered payload (used for relayed TEXT, etc.). |
-| `GPS`  | Phase 3 | `*` | `<lat>,<lon>,<sats>,<fix>,<batt_pct>,<age_s>` | no | Position telemetry. `fix` = `1`/`0`. `age_s` = seconds since last real fix (`0` if live). |
+| `GPS`  | Phase 2 | `*` | `<lat>,<lon>,<sats>,<source>,<age_s>` | no | Position telemetry. `source`: `0` none, `1` GPS module, `2` phone via captive portal. `age_s` = seconds since that position was obtained (`0` = live). Sent every ~20 s, skipped entirely while `source` is 0. |
 | `TEXT` | Phase 3 | node or `*` | `<free text>` | yes | Rescuer message. Directed or broadcast. |
 | `SOS`  | Phase 3 | `*` | `<lat>,<lon>,<message>` | yes (TTL 4) | Emergency. Sent 3× with jittered spacing (non-blocking). Coords are the sender's current fix, or last-known with `age_s` appended as `,STALE:<age>`. |
 | `SOSACK` | Phase 3 | node | `<acking_node>,<original_msgid>` | yes | Optional: confirms an SOS was seen by the command center / another node. |
@@ -89,8 +89,29 @@ At SF8/BW125, a ~90-byte packet ≈ 150 ms airtime. With 5 nodes each sending `H
 occasional `RT`/`GPS`, aggregate airtime is well under 1% — fine for a lab demo. SOS bursts (3×)
 and rover telemetry are the peak load; the send scheduler serialises them per node.
 
-## 7. Change log
+## 7. Location sources
+
+A node's reported position can come from either of two independent sources, tracked separately
+and merged by a priority rule (`LOCATION_PREFER_PHONE` in each sketch):
+
+| `source` | Meaning | Freshness window |
+|---|---|---|
+| `1` GPS module | live NMEA fix from the NEO-6M / NEO-M8N | 30 s |
+| `2` phone | position handed over by a phone through the node's captive portal | 5 min |
+
+Default priority is **phone first, module as fallback** — the module cannot fix indoors or under
+debris, which is where a rescue node usually is. If neither source is fresh, the most recent of
+the two is sent anyway with its true `age_s`, so a stale position is never mistaken for a live one.
+
+> **Constraint worth recording:** browsers only allow `navigator.geolocation` on a secure (HTTPS)
+> origin. A captive portal is plain HTTP, so phones generally refuse the browser-GPS button. The
+> portal therefore also accepts manually entered coordinates, which is the reliable path. This
+> affects the proposal's "Browser Geolocation API" claim and should be stated honestly in the
+> final report.
+
+## 8. Change log
 
 | Version | Date | Change |
 |---|---|---|
-| v1 draft | 2026-09-03 | Initial spec. Freeze pending Phase 0. |
+| v1 draft | 2026-09-03 | Initial spec. |
+| v1 | 2026-09-03 | `GPS` payload finalised as `lat,lon,sats,source,age_s` and moved to Phase 2 (hybrid GPS-module / phone location). Frame format unchanged, so `PROTO_VERSION` stays 1. |
