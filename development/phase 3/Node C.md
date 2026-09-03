@@ -87,7 +87,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 // NOTE: the stock LoRa library leaves CRC OFF and uses the public sync word
 // 0x12, so any other SX127x nearby collides with us. Both are fixed here.
 #define LORA_FREQ      433E6
-#define LORA_SF        8
+#define LORA_SF        7        // was 8; measured SNR 10-13 dB leaves plenty of margin
 #define LORA_BW        125000L
 #define LORA_CR        5
 #define LORA_TXPOWER   17
@@ -113,14 +113,14 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define LOC_PHONE  2
 
 // -------------------------------- timing ----------------------------------
-#define HB_INTERVAL_MS       12000UL
+#define HB_INTERVAL_MS       10000UL
 #define HB_JITTER_MS          3000UL
-#define GPS_INTERVAL_MS      20000UL
+#define GPS_INTERVAL_MS      30000UL
 #define GPS_JITTER_MS         4000UL
 #define RT_INTERVAL_MS       15000UL   // routing advertisement period
 #define RT_JITTER_MS          4000UL
-#define ROUTE_TIMEOUT_MS     45000UL   // ~3 missed adverts -> route invalid
-#define NEIGHBOR_TIMEOUT_MS  40000UL
+#define ROUTE_TIMEOUT_MS     50000UL   // ~3 missed adverts -> route invalid
+#define NEIGHBOR_TIMEOUT_MS  35000UL   // ~3 missed heartbeats
 #define AUTO_DATA_MS         15000UL   // repeat-send period when t is toggled on
 #define OLED_REFRESH_MS       1000UL
 #define UI_PAGE_MS            4000UL   // how long each OLED page is shown
@@ -139,7 +139,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define TX_QUEUE_DEPTH     6
 #define NMEA_BUF_LEN     100
 #define UI_PAGES           3
-#define WDT_TIMEOUT_S     20
+#define WDT_TIMEOUT_S     60       // was 20 - portal + LoRa TX can legitimately take seconds
 #define SERIAL_BAUD   115200
 
 // ===========================================================================
@@ -580,6 +580,10 @@ bool     autoData = false;
 char     autoTarget[4] = "";
 uint8_t  uiPage = 0;
 
+// A node that has just booted sends a few quick heartbeats so its peers
+// rediscover it in seconds instead of waiting a whole HB_INTERVAL_MS.
+uint8_t  bootBeacons = 4;
+
 uint16_t nextMsgId() {
   if (++msgIdCounter == 0) msgIdCounter = 1;
   return msgIdCounter;
@@ -925,7 +929,7 @@ function tick(){
   document.getElementById('nb').innerHTML=d.neigh?d.neigh:'(none heard yet)';
  }).catch(function(e){});
 }
-setInterval(tick,3000);tick();
+setInterval(tick,6000);tick();
 </script></body></html>)HTML";
 
 void handlePortal() {
@@ -1058,6 +1062,22 @@ const char *resetReasonName() {
   }
 }
 
+// Same thing in one word, for the periodic [stat] line.
+const char *resetReasonShort() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:   return "POWERON";
+    case ESP_RST_EXT:       return "EXT";
+    case ESP_RST_SW:        return "SW";
+    case ESP_RST_PANIC:     return "PANIC";
+    case ESP_RST_INT_WDT:   return "INT_WDT";
+    case ESP_RST_TASK_WDT:  return "TASK_WDT";
+    case ESP_RST_WDT:       return "WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT";
+    default:                return "UNKNOWN";
+  }
+}
+
 void wdtBegin() {
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
   esp_task_wdt_config_t cfg;
@@ -1085,7 +1105,12 @@ void sendHeartbeat() {
   if (pktBuild(frame, sizeof(frame), "HB", MY_ID, "*", nextMsgId(), 0, payload))
     radioEnqueue(frame);
 
-  hbTimer.setPeriod(HB_INTERVAL_MS + (uint32_t)random(0, HB_JITTER_MS));
+  if (bootBeacons > 0) {
+    bootBeacons--;                       // fast rediscovery right after a boot
+    hbTimer.setPeriod(3000UL);
+  } else {
+    hbTimer.setPeriod(HB_INTERVAL_MS + (uint32_t)random(0, HB_JITTER_MS));
+  }
 }
 
 // GPS payload:  lat,lon,sats,source,age_seconds
@@ -1427,10 +1452,11 @@ void printStats() {
   Serial.printf(" wifi=%d", (int)WiFi.softAPgetStationNum());
 #endif
   double lat, lon; uint32_t ageMs;
-  Serial.printf(" loc=%s minheap=%lu stack=%lu\n",
+  Serial.printf(" loc=%s minheap=%lu stack=%lu rst=%s\n",
                 locSrcName(locBest(lat, lon, ageMs)),
                 (unsigned long)esp_get_minimum_free_heap_size(),
-                (unsigned long)uxTaskGetStackHighWaterMark(NULL));
+                (unsigned long)uxTaskGetStackHighWaterMark(NULL),
+                resetReasonShort());
 }
 
 void handleSerial() {
@@ -1530,6 +1556,12 @@ void setup() {
   Serial.printf("\n[boot] Node %s fw v%u  heap=%lu\n",
                 MY_ID, (unsigned)FW_VERSION, (unsigned long)ESP.getFreeHeap());
   Serial.printf("[boot] last reset: %s\n", resetReasonName());
+  // Print the reason for the LAST reset in a box that cannot be scrolled past.
+  // If a node is restarting by itself, this single line identifies the cause.
+  Serial.println("\n############################################################");
+  Serial.printf ("#  WHY DID THIS NODE LAST RESTART?\n");
+  Serial.printf ("#     %s\n", resetReasonName());
+  Serial.println("############################################################\n");
 
   // STEP 2: GPS serial
   Serial2.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
@@ -1555,9 +1587,15 @@ void setup() {
   oledBanner("WiFi AP up", AP_SSID);
 #endif
 
+  {
+    char rl[24];
+    snprintf(rl, sizeof(rl), "rst:%s", resetReasonShort());
+    oledBanner("Last restart was", rl);
+  }
+
   wdtBegin();
 
-  hbTimer.begin(HB_INTERVAL_MS,  (uint32_t)random(0, HB_JITTER_MS));   // staggered
+  hbTimer.begin(3000UL, 500UL + (uint32_t)random(0, 1200));   // fast first beacons
   gpsTimer.begin(GPS_INTERVAL_MS, 4000UL + (uint32_t)random(0, GPS_JITTER_MS));
   rtTimer.begin(RT_INTERVAL_MS, 2000UL + (uint32_t)random(0, RT_JITTER_MS));
   pageTimer.begin(UI_PAGE_MS, UI_PAGE_MS);

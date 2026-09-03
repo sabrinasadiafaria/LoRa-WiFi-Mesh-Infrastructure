@@ -156,3 +156,50 @@ Record results in `../docs/TEST_REPORT.md`.
 | Failure behaviour | — | route invalidated and reported; recovers on its own |
 | OLED | 1 page | 3 cycling pages |
 | Forward delay | — | none — the old code did `delay(100)` before every forward |
+
+---
+
+## Revision — reboot and discovery fixes
+
+Applied after Node B kept restarting and the nodes stopped finding each other.
+**Node B is the one a phone was attached to; Node A had no phone.** That, plus the fact that the
+three sketches are identical apart from the display driver, is what these changes target.
+
+| Change | Was | Now | Why |
+|---|---|---|---|
+| `LORA_SF` | 8 | **7** | Measured link was −62…−71 dBm at SNR 10–13 dB. SF7 needs about −7.5 dB SNR, so there is ~18 dB of margin. SF7 roughly **halves airtime** (~137 ms → ~72 ms per packet), which halves the chance two nodes collide. Phase 3 added a third broadcast type, so airtime mattered more. |
+| `WDT_TIMEOUT_S` | 20 | **60** | Too tight. Web server + DNS + a blocking `LoRa.endPacket()` can legitimately take seconds when a phone is on the portal. 60 s still catches a genuine hang. |
+| `GPS_INTERVAL_MS` | 20 s | **30 s** | Fewer transmissions. |
+| `HB_INTERVAL_MS` | 12 s | **10 s** | Cheaper at SF7, and faster discovery. |
+| `NEIGHBOR_TIMEOUT_MS` | 40 s | **35 s** | Keeps it at ~3 missed heartbeats. |
+| `ROUTE_TIMEOUT_MS` | 45 s | **50 s** | ~3 missed route adverts. |
+| Portal poll | 3 s | **6 s** | Halves HTTP connection churn on the node serving a phone — the node that reboots. |
+| Boot beacons | — | **4 × 3 s** | A node that just rebooted used to wait up to 15 s to announce itself, while peers took 40 s to age it out. It now sends four quick heartbeats, so rediscovery takes seconds. |
+
+**"Nodes can't find each other" was largely a *symptom*:** a node that reboots every couple of
+minutes spends much of its life either off-air or not yet re-announced. The boot beacon burst and
+the shorter timeouts fix the visible symptom; the reboot itself still has to be identified.
+
+### The reset reason is now impossible to miss
+
+Every node prints this at boot, in a box:
+
+```
+############################################################
+#  WHY DID THIS NODE LAST RESTART?
+#     BROWNOUT - 3.3V rail sagged  <<< POWER PROBLEM
+############################################################
+```
+
+It also appears on the OLED for a moment during boot (`rst:BROWNOUT`) and on every `[stat]` line
+as `rst=BROWNOUT`.
+
+| Reason shown | What it means | Who fixes it |
+|---|---|---|
+| `BROWNOUT` | the 3.3 V rail sagged under load | **hardware** — better USB supply/cable, and a 470 µF capacitor across 3V3–GND |
+| `TASK_WDT` / `INT_WDT` | the loop stalled longer than 60 s | **code** — send me the log, something is blocking |
+| `PANIC` | crash: null pointer, bad cast, stack overflow | **code** — send me the log |
+| `POWERON` | you applied power or pressed EN | not a fault |
+
+`minheap` on the stat line is the other half: if it keeps sliding toward zero over 30 minutes,
+the reboot is memory exhaustion rather than power.
