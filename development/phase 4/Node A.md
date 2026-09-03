@@ -1575,7 +1575,16 @@ void handleOneRx() {
   Packet p;
   if (!radioPoll(p)) return;
   if (strcmp(p.src, MY_ID) == 0) return;              // our own echo
-  if (seenOrAdd(p.src, p.msgId)) return;              // duplicate
+
+  // Duplicate suppression applies ONLY to packet types we forward. HB / RT /
+  // GPS / STAT are broadcast, never relayed, and idempotent - running one
+  // twice just re-stamps a timestamp. Deduping them broke reconnection: a
+  // rebooted node restarts its msgId at 1, our seen-ring still holds its old
+  // (src,1..N), so its fresh heartbeats looked like duplicates for minutes
+  // and the node stayed LOST until the ring cycled.
+  bool forwardable = !strcmp(p.type, "DATA")   || !strcmp(p.type, "SOS") ||
+                     !strcmp(p.type, "SOSACK") || !strcmp(p.type, "RPT");
+  if (forwardable && seenOrAdd(p.src, p.msgId)) return;   // already handled
 
   int ev = neighborSeen(p.src, p.rssi, p.snr);
   if      (ev == NB_NEW)         Serial.printf("[mesh] NEW neighbour %s  %d dBm\n", p.src, p.rssi);

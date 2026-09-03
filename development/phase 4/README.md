@@ -166,3 +166,18 @@ every node dropped every neighbour ~30 s later.
 
 If nodes still lose each other after this, the next lever is `TX_MIN_GAP_MS` / the HB and RT
 intervals — tell me the `[stat]` line (`rx` frozen vs `rx` climbing-but-slow says which).
+
+---
+
+## Revision — lost nodes could not reconnect
+
+When a node rebooted it restarted its `msgId` at 1. The other nodes' 32-entry
+duplicate-suppression ring still held that node's *old* `(src, 1..N)`, so its
+fresh heartbeats were dropped as duplicates for several minutes — the node
+stayed `LOST` until the ring cycled through on its own.
+
+Fix: duplicate suppression now applies **only to forwarded packet types**
+(`DATA`, `SOS`, `SOSACK`, `RPT`). `HB` / `RT` / `GPS` / `STAT` are broadcast,
+never relayed, and idempotent — processing one twice just re-stamps a
+timestamp — so they skip the seen-ring entirely and a rebooted node is picked
+up on its very next heartbeat (~3 s, via the boot-beacon burst).
