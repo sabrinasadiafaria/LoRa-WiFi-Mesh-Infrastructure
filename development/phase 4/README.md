@@ -134,3 +134,35 @@ All three up, one phone on a portal, fire an SOS every few minutes. Record `s` e
 - [ ] Test 7 — 30-min soak with repeated SOS: heap flat, no reboots
 
 Record results in `../docs/TEST_REPORT.md`.
+
+---
+
+## Revision — "SOS works but then nodes lose each other"
+
+Root cause: the sketch was driving the SX1278 with **two incompatible APIs at once**.
+
+The Sandeep Mistry library gives you two ways to run the radio and they must not be mixed:
+- **poll `parsePacket()`** — it re-arms `RX_SINGLE` itself every call
+- **`LoRa.receive()` + `onReceive()` callback** — interrupt driven, `RX_CONTINUOUS`
+
+Every build so far called `LoRa.receive()` after each transmit **and** polled `parsePacket()` in
+the RX path. `parsePacket()` with no size argument, when it finds nothing, forces the radio to
+`RX_SINGLE` — so it kept pulling the radio out of the `RX_CONTINUOUS` that `receive()` set. After
+an async `endPacket(true)` left a stale `TX_DONE` flag in that tug-of-war, the radio would settle
+in `STANDBY` and go **permanently deaf**. An SOS burst (three nodes all transmitting copies,
+forwards and ACKs at once) is what reliably tipped it over — which is why SOS "worked" and then
+every node dropped every neighbour ~30 s later.
+
+### Fix
+
+- **`LoRa.receive()` is never called.** The sketch is now pure polling. After `endPacket(true)`
+  we wait `TX_AIRTIME_MS` (420 ms, ~2× the on-air time of our biggest frame at SF7) and hand the
+  radio straight back to `parsePacket()`.
+- `TX_AIRTIME_MS` 500 → 420 (was needlessly conservative; 420 ms of not-listening per packet is
+  already a lot).
+- `handleRx()` now drains **up to 4 packets per loop** instead of one. During a burst, handling
+  one packet per loop — plus the slow `Serial.printf` that trails it — let the rest fall out of
+  the single-packet RX FIFO.
+
+If nodes still lose each other after this, the next lever is `TX_MIN_GAP_MS` / the HB and RT
+intervals — tell me the `[stat]` line (`rx` frozen vs `rx` climbing-but-slow says which).

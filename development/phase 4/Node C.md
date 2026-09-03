@@ -124,7 +124,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define STAT_LOG_MS          30000UL
 #define TX_MIN_GAP_MS          150UL   // the airtime wait above already spaces us out
 #define TX_GAP_JITTER_MS       250UL
-#define TX_AIRTIME_MS          500UL   // upper bound on airtime of one frame at SF7
+#define TX_AIRTIME_MS          420UL   // > on-air time of our biggest frame at SF7 (~330ms)
 #define RADIO_RETRY_MS        5000UL
 
 // --------------------------------- sizes ----------------------------------
@@ -676,7 +676,7 @@ bool radioBegin() {
       LoRa.setSyncWord(LORA_SYNCWORD);
       LoRa.setPreambleLength(LORA_PREAMBLE);
       LoRa.enableCrc();
-      LoRa.receive();
+      // no LoRa.receive() - parsePacket() arms RX (see radioService comment)
       radioOk = true;
       return true;
     }
@@ -696,34 +696,31 @@ bool radioEnqueue(const char *frame) {
   return true;
 }
 
-// Transmit is ASYNCHRONOUS and bounded.
+// Transmit is ASYNCHRONOUS and bounded, and RX mode is left to parsePacket().
 //
-// WHY: LoRa.endPacket() with no argument spins here, inside the library:
+// The half-duplex SX1278 has ONE state machine. The Sandeep Mistry library
+// gives you two ways to run it and THEY MUST NOT BE MIXED:
 //
-//     while ((readRegister(REG_IRQ_FLAGS) & IRQ_TX_DONE_MASK) == 0) yield();
+//   A) poll parsePacket() forever   - parsePacket() re-arms RX_SINGLE itself
+//   B) LoRa.receive() + onReceive()  - interrupt driven, RX_CONTINUOUS
 //
-// There is no timeout. If the SX1278 never raises TX_DONE - a SPI glitch, or
-// the 3.3V rail dipping because the Wi-Fi AP transmitted at the same instant -
-// that loop NEVER RETURNS and the task watchdog kills the node. That is the
-// "TASK_WDT - loop stalled" reset, and it is why the node with a phone on its
-// portal died while the one without a phone did not.
+// Earlier builds did both: LoRa.receive() after every transmit AND
+// parsePacket() in the RX path. parsePacket() with no size argument, when it
+// finds nothing, forces the radio to RX_SINGLE - so it kept yanking the radio
+// out of the RX_CONTINUOUS that receive() had set, and after an async TX left
+// a stale TX_DONE flag in the mix the radio would settle in STANDBY and go
+// permanently deaf. That is the "SOS works but then every node loses every
+// neighbour" bug.
 //
-// endPacket(true) returns immediately instead. We then wait TX_AIRTIME_MS -
-// comfortably longer than the airtime of even a full-size frame at SF7 - and
-// call LoRa.receive(), which forces the radio out of TX and back into receive.
-// If the transmit finished normally that is just the usual return to RX; if
-// the radio wedged in TX, this is what un-wedges it. Either way the loop is
-// never blocked.
-//
-// (LoRa.isTransmitting() would be the precise way to test this, but it is
-// private in the library, so we bound it by time instead.)
+// Fix: this sketch is model (A) only. We NEVER call LoRa.receive(). After
+// endPacket(true) we simply wait TX_AIRTIME_MS (longer than the on-air time
+// of our biggest frame at SF7) and then hand the radio back to parsePacket(),
+// which re-arms RX on its next call.
 void radioService() {
   // ---- finish an in-flight transmission -----------------------------------
   if (txInFlight) {
     if (millis() - txStart < TX_AIRTIME_MS) return;   // still on air
-
-    LoRa.receive();                   // forces TX -> RX, and recovers a wedge
-    txInFlight = false;
+    txInFlight = false;                 // parsePacket() re-arms RX next loop
     statTx++;
     txLast = millis();
     txGap  = TX_MIN_GAP_MS + (uint32_t)random(0, TX_GAP_JITTER_MS);
@@ -735,17 +732,15 @@ void radioService() {
   if (millis() - txLast < txGap) return;
 
   // beginPacket() returns 0 if the radio still thinks it is transmitting.
-  // Leave the frame queued and try again on the next pass rather than
-  // stamping on a transmit in progress.
+  // Leave the frame queued and try again very soon.
   if (LoRa.beginPacket() == 0) {
     statTxStuck++;
-    LoRa.receive();                   // nudge it back to a known state
-    txLast = millis();
+    txLast = millis() - txGap + 40;
     return;
   }
 
   LoRa.print(txQueue[txHead]);
-  LoRa.endPacket(true);               // async - returns straight away
+  LoRa.endPacket(true);                 // async - returns straight away
   txInFlight = true;
   txStart    = millis();
 
@@ -1584,7 +1579,7 @@ void sendStatus(const char *st) {
 }
 
 
-void handleRx() {
+void handleOneRx() {
   Packet p;
   if (!radioPoll(p)) return;
   if (strcmp(p.src, MY_ID) == 0) return;              // our own echo
@@ -1755,6 +1750,15 @@ void handleRx() {
   Serial.printf("[rx] %s from %s id=%u ttl=%u rssi=%d snr=%.1f : %s\n",
                 p.type, p.src, (unsigned)p.msgId, (unsigned)p.ttl,
                 p.rssi, (double)p.snr, p.payload);
+}
+
+// Drain the receiver each loop. During an SOS burst three nodes transmit
+// copies, forwards and ACKs within a second or two; handling only one
+// packet per loop (plus its slow Serial.printf) let the rest fall out of
+// the single-packet RX FIFO - which is how every node lost every neighbour
+// right after an SOS. Bounded so a flood cannot stall the loop.
+void handleRx() {
+  for (uint8_t i = 0; i < 4; i++) handleOneRx();
 }
 
 void drawPage0() {
