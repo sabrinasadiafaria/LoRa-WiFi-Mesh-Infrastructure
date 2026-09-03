@@ -40,6 +40,7 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <esp_task_wdt.h>
+#include <esp_system.h>
 
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 
@@ -772,7 +773,7 @@ void handleStatus() {
   uint32_t ageMs = 0;
   uint8_t src = locBest(lat, lon, ageMs);
 
-  char nb[240];
+  static char nb[240];
   nb[0] = '\0';
   size_t used = 0;
   for (uint8_t i = 0; i < MAX_NEIGHBORS; i++) {
@@ -791,7 +792,7 @@ void handleStatus() {
     nb[used] = '\0';
   }
 
-  char json[520];
+  static char json[520];
   snprintf(json, sizeof(json),
            "{\"id\":\"%s\",\"lora\":%d,\"lat\":%.6f,\"lon\":%.6f,\"src\":%u,"
            "\"age\":%lu,\"sats\":%d,\"heap\":%lu,\"up\":%lu,\"neigh\":\"%s\"}",
@@ -841,6 +842,36 @@ void portalService() {
 // ===========================================================================
 //  WATCHDOG   (guarded for ESP32 Arduino core 2.x and 3.x)
 // ===========================================================================
+// ===========================================================================
+//  BOOT DIAGNOSTICS
+//
+//  When a node reboots on its own, THIS is the first thing to look at. The
+//  ESP32 records why it last reset and keeps that across the reboot, so the
+//  line printed in setup() tells us which kind of fault we are chasing:
+//
+//    BROWNOUT  -> the 3.3V rail sagged. Power/USB/cable/capacitor problem,
+//                 usually when LoRa TX + Wi-Fi + GPS draw at the same time.
+//    TASK_WDT  -> loop() stalled for longer than WDT_TIMEOUT_S. Something
+//                 blocked - most likely the I2C display or the radio.
+//    PANIC     -> a real crash (null pointer, bad cast, stack overflow).
+//    POWERON   -> normal: you applied power or pressed EN. Not a fault.
+// ===========================================================================
+const char *resetReasonName() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:   return "POWERON (normal power-up / EN button)";
+    case ESP_RST_EXT:       return "EXT (external reset pin)";
+    case ESP_RST_SW:        return "SW (software restart)";
+    case ESP_RST_PANIC:     return "PANIC - crash/exception  <<< SOFTWARE BUG";
+    case ESP_RST_INT_WDT:   return "INT_WDT - interrupt watchdog  <<< SOMETHING BLOCKED";
+    case ESP_RST_TASK_WDT:  return "TASK_WDT - loop stalled  <<< SOMETHING BLOCKED";
+    case ESP_RST_WDT:       return "WDT - other watchdog  <<< SOMETHING BLOCKED";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP wake";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT - 3.3V rail sagged  <<< POWER PROBLEM";
+    case ESP_RST_SDIO:      return "SDIO";
+    default:                return "UNKNOWN";
+  }
+}
+
 void wdtBegin() {
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
   esp_task_wdt_config_t cfg;
@@ -1021,7 +1052,10 @@ void printStats() {
   Serial.printf(" wifi=%d", (int)WiFi.softAPgetStationNum());
 #endif
   double lat, lon; uint32_t ageMs;
-  Serial.printf(" loc=%s\n", locSrcName(locBest(lat, lon, ageMs)));
+  Serial.printf(" loc=%s minheap=%lu stack=%lu\n",
+                locSrcName(locBest(lat, lon, ageMs)),
+                (unsigned long)esp_get_minimum_free_heap_size(),
+                (unsigned long)uxTaskGetStackHighWaterMark(NULL));
 }
 
 void handleSerial() {
@@ -1079,6 +1113,7 @@ void setup() {
 
   Serial.printf("\n[boot] Node %s fw v%u  heap=%lu\n",
                 MY_ID, (unsigned)FW_VERSION, (unsigned long)ESP.getFreeHeap());
+  Serial.printf("[boot] last reset: %s\n", resetReasonName());
 
   // STEP 2: GPS serial
   Serial2.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
