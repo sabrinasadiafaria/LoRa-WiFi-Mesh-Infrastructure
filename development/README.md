@@ -61,7 +61,7 @@ exactly one file per board.
 | 1 | Shared core — heartbeat, neighbours, CRC, watchdog | 60-min soak, heap flat |
 | 2 | Hybrid location — GPS module + phone via captive portal | portal works on a phone; Wi-Fi and LoRa coexist |
 | 3 | Unified mesh — routing, multi-hop, self-healing | A→C via B; kill/restore B |
-| 4 | SOS button + rescue messaging | SOS shows live coords, screen clears |
+| 4 | SOS button + rescue messaging | SOS auto-clears; reaches whole mesh |
 | 5 | Gateway + Raspberry Pi command center + dashboard | every event visible on the map |
 | 6 | Autonomous rover + mobile relay | 5 min collision-free; relay restores A↔C |
 | 7 | Integration, tuning, field/range test | end-to-end scenario passes 3× |
@@ -77,7 +77,7 @@ Detailed flashing instructions: `docs/BUILD_AND_FLASH.md`.
 | 1 Shared core firmware | 🟡 code written — awaiting hardware verification |
 | 2 Hybrid location + captive portal | 🟡 code written — awaiting hardware verification |
 | 3 Multi-hop mesh + self-healing | 🟡 code written — awaiting hardware verification |
-| 4 SOS + messaging | ⬜ not started |
+| 4 SOS + rescue messaging | 🟡 code written — awaiting hardware verification |
 | 5 Pi command center | ⬜ not started |
 | 6 Autonomous rover | ⬜ not started |
 | 7 Integration & field test | ⬜ not started |

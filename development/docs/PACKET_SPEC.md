@@ -49,8 +49,8 @@ v1|SOS|A|*|41|4|23.797810,90.449720,MAYDAY INJURED RESCUER|7c
 | `DATA` | Phase 2 | node | `<application bytes>` | yes | Generic end-to-end delivered payload (used for relayed TEXT, etc.). |
 | `GPS`  | Phase 2 | `*` | `<lat>,<lon>,<sats>,<source>,<age_s>` | no | Position telemetry. `source`: `0` none, `1` GPS module, `2` phone via captive portal. `age_s` = seconds since that position was obtained (`0` = live). Sent every ~20 s, skipped entirely while `source` is 0. |
 | `TEXT` | Phase 3 | node or `*` | `<free text>` | yes | Rescuer message. Directed or broadcast. |
-| `SOS`  | Phase 3 | `*` | `<lat>,<lon>,<message>` | yes (TTL 4) | Emergency. Sent 3× with jittered spacing (non-blocking). Coords are the sender's current fix, or last-known with `age_s` appended as `,STALE:<age>`. |
-| `SOSACK` | Phase 3 | node | `<acking_node>,<original_msgid>` | yes | Optional: confirms an SOS was seen by the command center / another node. |
+| `SOS`  | Phase 4 | `*` | `<lat>,<lon>,<message>` | yes (TTL 4) | Emergency. Sent 3× with jittered spacing (non-blocking). Coords are the sender's current fix, or last-known with `age_s` appended as `,STALE:<age>`. |
+| `SOSACK` | Phase 4 | node | `<acking_node>,<original_msgid>` | yes | Optional: confirms an SOS was seen by the command center / another node. |
 | `RPT`  | Phase 4 | `*` | `<code>,<lat>,<lon>,<team>` | yes | Quick rescue report. `code` ∈ `VICTIM_FOUND` `MEDICAL` `BLOCKED` `DANGER`. |
 | `STAT` | Phase 4 | `*` | `<team>,<state>` | no | Team status. `state` ∈ `AVAILABLE` `SEARCHING` `VICTIM_FOUND` `NEED_ASSIST` `EMERGENCY`. |
 | `MOVE` | Phase 6 | `RV` | `<cmd>` (`FWD` `BACK` `LEFT` `RIGHT` `STOP` `AUTO` `RELAY`) | yes | Rover drive command from dashboard/portal. |
