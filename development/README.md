@@ -22,7 +22,7 @@ development/
 ├── fixtures/        recorded GPS NMEA for indoor demo rehearsal
 ├── phase 1/         shared core: radio + packet + OLED + neighbours
 ├── phase 2/         hybrid location: GPS module + phone via captive portal
-├── phase 3/         unified mesh: routing + multi-hop + self-healing
+├── phase 3/         multi-hop mesh: routing + forwarding + self-healing
 ├── phase 4/         SOS button + rescue messaging
 ├── phase 5/         gateway node + Raspberry Pi command center
 ├── phase 6/         autonomous rover
@@ -76,7 +76,7 @@ Detailed flashing instructions: `docs/BUILD_AND_FLASH.md`.
 | 0 Audit & bench test | ⬜ awaiting hardware run |
 | 1 Shared core firmware | 🟡 code written — awaiting hardware verification |
 | 2 Hybrid location + captive portal | 🟡 code written — awaiting hardware verification |
-| 3 Unified mesh | ⬜ not started |
+| 3 Multi-hop mesh + self-healing | 🟡 code written — awaiting hardware verification |
 | 4 SOS + messaging | ⬜ not started |
 | 5 Pi command center | ⬜ not started |
 | 6 Autonomous rover | ⬜ not started |
