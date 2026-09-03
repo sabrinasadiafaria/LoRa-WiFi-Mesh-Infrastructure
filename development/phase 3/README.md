@@ -203,3 +203,60 @@ as `rst=BROWNOUT`.
 
 `minheap` on the stat line is the other half: if it keeps sliding toward zero over 30 minutes,
 the reboot is memory exhaustion rather than power.
+
+---
+
+## Root cause found — `LoRa.endPacket()` hangs forever
+
+The `TASK_WDT - loop stalled` reset from Node B identified it. Inside the LoRa library:
+
+```cpp
+int LoRaClass::endPacket(bool async) {
+  ...
+  while ((readRegister(REG_IRQ_FLAGS) & IRQ_TX_DONE_MASK) == 0) {
+    yield();          // <-- no timeout, ever
+  }
+```
+
+**There is no timeout.** If the SX1278 does not raise `TX_DONE` — a SPI glitch, or the 3.3 V rail
+dipping because the Wi-Fi AP transmitted at the same instant — that loop never returns and the
+task watchdog kills the node. `yield()` does not feed the task watchdog.
+
+That is why **Node B died and Node A did not**: Node B had a phone associated, so its Wi-Fi radio
+was actively transmitting alongside LoRa. Same code, different load.
+
+### The fix
+
+Transmission is now **asynchronous and bounded**:
+
+```cpp
+LoRa.endPacket(true);         // returns immediately
+txInFlight = true;
+```
+then each loop pass polls `LoRa.isTransmitting()`. If `TX_DONE` has not arrived within
+`TX_TIMEOUT_MS` (3 s), the radio is reinitialised and the node carries on instead of hanging.
+`radioPoll()` also refuses to touch the receiver while a transmit is in flight — the SX1278 is
+half duplex.
+
+A counter `txstuck=` on the `[stat]` line records how often this happens. **If it climbs, the
+radio really is glitching and the underlying cause is electrical** (supply, decoupling, wiring) —
+but the node stays alive and the mesh keeps running either way.
+
+### A second bug the log exposed
+
+```
+E (464) task_wdt: esp_task_wdt_init(517): TWDT already initialized
+```
+
+The Arduino ESP32 core starts the task watchdog **before `setup()` runs**, so
+`esp_task_wdt_init()` fails and `WDT_TIMEOUT_S` was **silently ignored** in every build so far.
+`wdtBegin()` now calls `esp_task_wdt_reconfigure()` first and prints what it actually got:
+
+```
+[wdt] task watchdog set to 30s (ok)
+```
+
+If that ever says `NOT APPLIED`, the timeout is not what the sketch says it is.
+
+`WDT_TIMEOUT_S` is back down to **30 s** — with transmits bounded at 3 s, nothing should come
+close, so a tight watchdog is useful again rather than a nuisance.

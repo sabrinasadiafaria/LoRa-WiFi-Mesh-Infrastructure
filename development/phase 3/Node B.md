@@ -127,6 +127,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define STAT_LOG_MS          30000UL
 #define TX_MIN_GAP_MS          400UL
 #define TX_GAP_JITTER_MS       250UL
+#define TX_TIMEOUT_MS         3000UL   // give up on a transmit that never completes
 #define RADIO_RETRY_MS        5000UL
 
 // --------------------------------- sizes ----------------------------------
@@ -139,7 +140,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define TX_QUEUE_DEPTH     6
 #define NMEA_BUF_LEN     100
 #define UI_PAGES           3
-#define WDT_TIMEOUT_S     60       // was 20 - portal + LoRa TX can legitimately take seconds
+#define WDT_TIMEOUT_S     30       // transmits are bounded now, so this can be tight again
 #define SERIAL_BAUD   115200
 
 // ===========================================================================
@@ -565,10 +566,13 @@ char     txQueue[TX_QUEUE_DEPTH][MAX_PACKET_LEN];
 uint8_t  txHead = 0, txTail = 0, txCount = 0;
 uint32_t txLast = 0;
 uint32_t txGap  = TX_MIN_GAP_MS;
+bool     txInFlight = false;      // a transmission is on air right now
+uint32_t txStart = 0;             // when it started, for the timeout
 uint16_t msgIdCounter = 0;
 
 uint32_t statTx = 0, statRx = 0, statBad = 0, statDrop = 0;
 uint32_t statFwd = 0, statDataTx = 0, statDataRx = 0;
+uint32_t statTxStuck = 0;         // transmits that never reported TX_DONE
 
 // last application message delivered to this node (shown on the OLED/portal)
 char     lastMsgFrom[4] = "";
@@ -622,25 +626,60 @@ bool radioEnqueue(const char *frame) {
   return true;
 }
 
+// Transmit is ASYNCHRONOUS and bounded.
+//
+// WHY: LoRa.endPacket() with no argument spins here, inside the library:
+//
+//     while ((readRegister(REG_IRQ_FLAGS) & IRQ_TX_DONE_MASK) == 0) yield();
+//
+// There is no timeout. If the SX1278 never raises TX_DONE - a SPI glitch, or
+// the 3.3V rail dipping because the Wi-Fi AP transmitted at the same instant -
+// that loop NEVER RETURNS and the task watchdog kills the node. That is the
+// "TASK_WDT - loop stalled" reset, and it is why the node with a phone on its
+// portal died while the one without a phone did not.
+//
+// endPacket(true) returns immediately instead; we poll isTransmitting() and,
+// if TX_DONE has not arrived within TX_TIMEOUT_MS, we reinitialise the radio
+// and carry on rather than hanging.
 void radioService() {
+  // ---- finish an in-flight transmission -----------------------------------
+  if (txInFlight) {
+    if (!LoRa.isTransmitting()) {
+      txInFlight = false;
+      statTx++;
+      LoRa.receive();                 // back to listening
+      txLast = millis();
+      txGap  = TX_MIN_GAP_MS + (uint32_t)random(0, TX_GAP_JITTER_MS);
+    } else if (millis() - txStart > TX_TIMEOUT_MS) {
+      Serial.println("[radio] TX never completed - resetting radio (this would "
+                     "have hung the node before)");
+      txInFlight = false;
+      statTxStuck++;
+      statDrop++;
+      radioOk = false;
+      radioBegin();                   // bounded: 3 attempts, then gives up
+      txLast = millis();
+    }
+    return;                           // never start a second transmit
+  }
+
+  // ---- start the next queued transmission ---------------------------------
   if (!radioOk || txCount == 0) return;
   if (millis() - txLast < txGap) return;
 
   LoRa.beginPacket();
   LoRa.print(txQueue[txHead]);
-  int r = LoRa.endPacket();
-  LoRa.receive();                     // always go back to listening
-
-  if (r == 1) statTx++; else statDrop++;
+  LoRa.endPacket(true);               // async - returns straight away
+  txInFlight = true;
+  txStart    = millis();
 
   txHead = (uint8_t)((txHead + 1) % TX_QUEUE_DEPTH);
   txCount--;
-  txLast = millis();
-  txGap  = TX_MIN_GAP_MS + (uint32_t)random(0, TX_GAP_JITTER_MS);
 }
 
 bool radioPoll(Packet &out) {
   if (!radioOk) return false;
+  if (txInFlight) return false;       // half duplex - not while we transmit
   int sz = LoRa.parsePacket();
   if (sz <= 0) return false;
 
@@ -1030,65 +1069,31 @@ void portalService() {
 #endif  // ENABLE_PORTAL
 
 // ===========================================================================
-//  WATCHDOG   (guarded for ESP32 Arduino core 2.x and 3.x)
 // ===========================================================================
-// ===========================================================================
-//  BOOT DIAGNOSTICS
+//  WATCHDOG
 //
-//  When a node reboots on its own, THIS is the first thing to look at. The
-//  ESP32 records why it last reset and keeps that across the reboot, so the
-//  line printed in setup() tells us which kind of fault we are chasing:
-//
-//    BROWNOUT  -> the 3.3V rail sagged. Power/USB/cable/capacitor problem,
-//                 usually when LoRa TX + Wi-Fi + GPS draw at the same time.
-//    TASK_WDT  -> loop() stalled for longer than WDT_TIMEOUT_S. Something
-//                 blocked - most likely the I2C display or the radio.
-//    PANIC     -> a real crash (null pointer, bad cast, stack overflow).
-//    POWERON   -> normal: you applied power or pressed EN. Not a fault.
+//  IMPORTANT: the Arduino ESP32 core ALREADY starts the task watchdog before
+//  setup() runs, with its own default timeout. Calling esp_task_wdt_init()
+//  therefore fails with "TWDT already initialized" and our WDT_TIMEOUT_S is
+//  silently ignored - the earlier build printed exactly that error and nobody
+//  noticed. Reconfigure first, fall back to init, and print what we actually
+//  ended up with so it can never be silently wrong again.
 // ===========================================================================
-const char *resetReasonName() {
-  switch (esp_reset_reason()) {
-    case ESP_RST_POWERON:   return "POWERON (normal power-up / EN button)";
-    case ESP_RST_EXT:       return "EXT (external reset pin)";
-    case ESP_RST_SW:        return "SW (software restart)";
-    case ESP_RST_PANIC:     return "PANIC - crash/exception  <<< SOFTWARE BUG";
-    case ESP_RST_INT_WDT:   return "INT_WDT - interrupt watchdog  <<< SOMETHING BLOCKED";
-    case ESP_RST_TASK_WDT:  return "TASK_WDT - loop stalled  <<< SOMETHING BLOCKED";
-    case ESP_RST_WDT:       return "WDT - other watchdog  <<< SOMETHING BLOCKED";
-    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP wake";
-    case ESP_RST_BROWNOUT:  return "BROWNOUT - 3.3V rail sagged  <<< POWER PROBLEM";
-    case ESP_RST_SDIO:      return "SDIO";
-    default:                return "UNKNOWN";
-  }
-}
-
-// Same thing in one word, for the periodic [stat] line.
-const char *resetReasonShort() {
-  switch (esp_reset_reason()) {
-    case ESP_RST_POWERON:   return "POWERON";
-    case ESP_RST_EXT:       return "EXT";
-    case ESP_RST_SW:        return "SW";
-    case ESP_RST_PANIC:     return "PANIC";
-    case ESP_RST_INT_WDT:   return "INT_WDT";
-    case ESP_RST_TASK_WDT:  return "TASK_WDT";
-    case ESP_RST_WDT:       return "WDT";
-    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
-    case ESP_RST_BROWNOUT:  return "BROWNOUT";
-    default:                return "UNKNOWN";
-  }
-}
-
 void wdtBegin() {
+  esp_err_t e;
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
   esp_task_wdt_config_t cfg;
   cfg.timeout_ms     = WDT_TIMEOUT_S * 1000;
   cfg.idle_core_mask = 0;
   cfg.trigger_panic  = true;
-  if (esp_task_wdt_init(&cfg) != ESP_OK) esp_task_wdt_reconfigure(&cfg);
+  e = esp_task_wdt_reconfigure(&cfg);          // the TWDT is already running
+  if (e != ESP_OK) e = esp_task_wdt_init(&cfg);
 #else
-  esp_task_wdt_init(WDT_TIMEOUT_S, true);
+  e = esp_task_wdt_init(WDT_TIMEOUT_S, true);
 #endif
   esp_task_wdt_add(NULL);
+  Serial.printf("[wdt] task watchdog set to %us (%s)\n",
+                (unsigned)WDT_TIMEOUT_S, (e == ESP_OK) ? "ok" : "NOT APPLIED");
 }
 
 // ===========================================================================
@@ -1452,10 +1457,11 @@ void printStats() {
   Serial.printf(" wifi=%d", (int)WiFi.softAPgetStationNum());
 #endif
   double lat, lon; uint32_t ageMs;
-  Serial.printf(" loc=%s minheap=%lu stack=%lu rst=%s\n",
+  Serial.printf(" loc=%s minheap=%lu stack=%lu txstuck=%lu rst=%s\n",
                 locSrcName(locBest(lat, lon, ageMs)),
                 (unsigned long)esp_get_minimum_free_heap_size(),
                 (unsigned long)uxTaskGetStackHighWaterMark(NULL),
+                (unsigned long)statTxStuck,
                 resetReasonShort());
 }
 
