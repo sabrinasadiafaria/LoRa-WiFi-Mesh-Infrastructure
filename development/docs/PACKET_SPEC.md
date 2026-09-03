@@ -28,7 +28,7 @@ replaces them with `/` before transmit. Fields:
 |---|---|---|
 | `VER` | int | Protocol version. **v1** for this spec. Receiver drops mismatched major versions. |
 | `TYPE` | 3–5 char | See §3. |
-| `SRC` | node id | `A` `B` `C` `GW` `RV` (short form; no `NODE_` prefix). |
+| `SRC` | node id | `A` `B` `C` `PI` `RV` (short form; no `NODE_` prefix). |
 | `DEST` | node id or `*` | `*` = broadcast to all. |
 | `MSGID` | uint16 | Per-source monotonically increasing. `SRC`+`MSGID` = globally unique packet id. Wraps at 65535 → 1 (never 0). |
 | `TTL` | uint8 | Remaining hops. Sender sets it (default 4). Each forwarder decrements. 0 = do not forward. |
@@ -53,6 +53,7 @@ v1|SOS|A|*|41|4|23.797810,90.449720,MAYDAY INJURED RESCUER|7c
 | `SOSACK` | Phase 4 | node | `<acking_node>,<original_msgid>` | yes | Optional: confirms an SOS was seen by the command center / another node. |
 | `RPT`  | Phase 4 | `*` | `<code>,<lat>,<lon>,<team>` | yes | Quick rescue report. `code` ∈ `VICTIM_FOUND` `MEDICAL` `BLOCKED` `DANGER`. |
 | `STAT` | Phase 4 | `*` | `<team>,<state>` | no | Team status. `state` ∈ `AVAILABLE` `SEARCHING` `VICTIM_FOUND` `NEED_ASSIST` `EMERGENCY`. |
+| `CMD`  | Phase 5 | node | `<verb>[,<arg>]` | yes | Command centre -> node. verb: `WHERE` (reply GPS), `PING` (reply pong), `SOS` (raise), `SOSCLR` (clear). |
 | `MOVE` | Phase 6 | `RV` | `<cmd>` (`FWD` `BACK` `LEFT` `RIGHT` `STOP` `AUTO` `RELAY`) | yes | Rover drive command from dashboard/portal. |
 | `ROVER`| Phase 6 | `*` | `<mode>,<obstacle_cm>,<batt_pct>,<lat>,<lon>` | no | Rover telemetry. |
 
