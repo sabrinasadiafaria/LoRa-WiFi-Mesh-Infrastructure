@@ -120,9 +120,9 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 #define OLED_REFRESH_MS       1000UL
 #define UI_PAGE_MS            4000UL   // how long each OLED page is shown
 #define STAT_LOG_MS          30000UL
-#define TX_MIN_GAP_MS          400UL
+#define TX_MIN_GAP_MS          150UL   // the airtime wait above already spaces us out
 #define TX_GAP_JITTER_MS       250UL
-#define TX_TIMEOUT_MS         3000UL   // give up on a transmit that never completes
+#define TX_AIRTIME_MS          500UL   // upper bound on airtime of one frame at SF7
 #define RADIO_RETRY_MS        5000UL
 
 // --------------------------------- sizes ----------------------------------
@@ -633,36 +633,42 @@ bool radioEnqueue(const char *frame) {
 // "TASK_WDT - loop stalled" reset, and it is why the node with a phone on its
 // portal died while the one without a phone did not.
 //
-// endPacket(true) returns immediately instead; we poll isTransmitting() and,
-// if TX_DONE has not arrived within TX_TIMEOUT_MS, we reinitialise the radio
-// and carry on rather than hanging.
+// endPacket(true) returns immediately instead. We then wait TX_AIRTIME_MS -
+// comfortably longer than the airtime of even a full-size frame at SF7 - and
+// call LoRa.receive(), which forces the radio out of TX and back into receive.
+// If the transmit finished normally that is just the usual return to RX; if
+// the radio wedged in TX, this is what un-wedges it. Either way the loop is
+// never blocked.
+//
+// (LoRa.isTransmitting() would be the precise way to test this, but it is
+// private in the library, so we bound it by time instead.)
 void radioService() {
   // ---- finish an in-flight transmission -----------------------------------
   if (txInFlight) {
-    if (!LoRa.isTransmitting()) {
-      txInFlight = false;
-      statTx++;
-      LoRa.receive();                 // back to listening
-      txLast = millis();
-      txGap  = TX_MIN_GAP_MS + (uint32_t)random(0, TX_GAP_JITTER_MS);
-    } else if (millis() - txStart > TX_TIMEOUT_MS) {
-      Serial.println("[radio] TX never completed - resetting radio (this would "
-                     "have hung the node before)");
-      txInFlight = false;
-      statTxStuck++;
-      statDrop++;
-      radioOk = false;
-      radioBegin();                   // bounded: 3 attempts, then gives up
-      txLast = millis();
-    }
-    return;                           // never start a second transmit
+    if (millis() - txStart < TX_AIRTIME_MS) return;   // still on air
+
+    LoRa.receive();                   // forces TX -> RX, and recovers a wedge
+    txInFlight = false;
+    statTx++;
+    txLast = millis();
+    txGap  = TX_MIN_GAP_MS + (uint32_t)random(0, TX_GAP_JITTER_MS);
+    return;
   }
 
   // ---- start the next queued transmission ---------------------------------
   if (!radioOk || txCount == 0) return;
   if (millis() - txLast < txGap) return;
 
-  LoRa.beginPacket();
+  // beginPacket() returns 0 if the radio still thinks it is transmitting.
+  // Leave the frame queued and try again on the next pass rather than
+  // stamping on a transmit in progress.
+  if (LoRa.beginPacket() == 0) {
+    statTxStuck++;
+    LoRa.receive();                   // nudge it back to a known state
+    txLast = millis();
+    return;
+  }
+
   LoRa.print(txQueue[txHead]);
   LoRa.endPacket(true);               // async - returns straight away
   txInFlight = true;
@@ -1071,6 +1077,52 @@ void portalService() {
 //  noticed. Reconfigure first, fall back to init, and print what we actually
 //  ended up with so it can never be silently wrong again.
 // ===========================================================================
+// ===========================================================================
+//  BOOT DIAGNOSTICS
+//
+//  When a node reboots on its own, THIS is the first thing to look at. The
+//  ESP32 records why it last reset and keeps that across the reboot, so the
+//  banner printed in setup() tells us which kind of fault we are chasing:
+//
+//    BROWNOUT  -> the 3.3V rail sagged. Power/USB/cable/capacitor problem,
+//                 usually when LoRa TX + Wi-Fi + GPS draw at the same time.
+//    TASK_WDT  -> loop() stalled for longer than WDT_TIMEOUT_S. Something
+//                 blocked - most likely the radio or the I2C display.
+//    PANIC     -> a real crash (null pointer, bad cast, stack overflow).
+//    POWERON   -> normal: you applied power or pressed EN. Not a fault.
+// ===========================================================================
+const char *resetReasonName() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:   return "POWERON (normal power-up / EN button)";
+    case ESP_RST_EXT:       return "EXT (external reset pin)";
+    case ESP_RST_SW:        return "SW (software restart)";
+    case ESP_RST_PANIC:     return "PANIC - crash/exception  <<< SOFTWARE BUG";
+    case ESP_RST_INT_WDT:   return "INT_WDT - interrupt watchdog  <<< SOMETHING BLOCKED";
+    case ESP_RST_TASK_WDT:  return "TASK_WDT - loop stalled  <<< SOMETHING BLOCKED";
+    case ESP_RST_WDT:       return "WDT - other watchdog  <<< SOMETHING BLOCKED";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP wake";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT - 3.3V rail sagged  <<< POWER PROBLEM";
+    case ESP_RST_SDIO:      return "SDIO";
+    default:                return "UNKNOWN";
+  }
+}
+
+// Same thing in one word, for the periodic [stat] line.
+const char *resetReasonShort() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:   return "POWERON";
+    case ESP_RST_EXT:       return "EXT";
+    case ESP_RST_SW:        return "SW";
+    case ESP_RST_PANIC:     return "PANIC";
+    case ESP_RST_INT_WDT:   return "INT_WDT";
+    case ESP_RST_TASK_WDT:  return "TASK_WDT";
+    case ESP_RST_WDT:       return "WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT";
+    default:                return "UNKNOWN";
+  }
+}
+
 void wdtBegin() {
   esp_err_t e;
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
