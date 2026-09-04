@@ -6,6 +6,8 @@ joined the mesh:
 1. nodes randomly got lost — no single culprit, any of A/B/C
 2. a lost node could not rejoin
 3. the GPS module "should work properly"
+4. *(added in a later revision below)* disconnects that only a power cycle fixed, and a manual
+   "search nearby nodes" button
 
 **Flash all three node sketches.** The Pi side of this phase now lives in
 [`development/pi/`](../pi/) — see the note there and the Revision section below.
@@ -172,6 +174,7 @@ Record results in `../docs/TEST_REPORT.md`.
 | `5`–`8` | status: Available / Searching / Need Assist / Emergency |
 | **`v`** | **toggle per-packet rx logging** (off by default now) |
 | **`N`** | **raw NMEA dump, 5 s** |
+| **`R`** | **manual rescan/reconnect** — reinit the radio + rebroadcast now (also on the portal) |
 | `x` `h` | corrupt-frame test · help |
 
 ## Pi side
@@ -233,3 +236,78 @@ kill <pid>                     # or: sudo pkill -f main.py
 systemctl is-active sar-pi      # a service instance too?
 sudo systemctl stop sar-pi
 ```
+
+---
+
+## Revision — nodes disconnect at random, and only a power cycle fixed it
+
+The tell was in that phrasing: **only a power cycle fixed it.** That means the radio was reaching
+a bad *internal* state — one only a real hardware reset clears — and nothing in software was
+watching for it.
+
+### The gap
+
+`radioOk` is set `true` once, in `radioBegin()` at boot, and **nothing ever set it back to
+`false` while the node was running.** The one existing recovery path —
+`if (!radioOk && retryTimer.due()) radioBegin();` — could therefore never fire after boot,
+no matter how wedged the SX1278 got. A node that lost its radio internally looked, to its own
+firmware, exactly like a node with a perfectly healthy radio and no traffic. Only power-cycling
+(a real hardware reset pin toggle at power-on) could clear it.
+
+### The fix — a radio-health watchdog that does what your power cycle was doing
+
+One signal cannot lie: **this node's own heartbeat is generated every `HB_INTERVAL_MS`
+regardless of whether any other node is nearby.** If it has not gone out successfully in a long
+time, the local radio is broken — not the RF link, not the other end. (Using "have I *received*
+anything" instead would false-trigger constantly on a node with no peers in range yet, which is
+why that signal isn't used.)
+
+`radioWatchdog()` runs every loop:
+
+```c
+if (millis() - lastTxOkMs > RADIO_WEDGE_MS) {   // 90s, ~11 missed heartbeats
+  radioOk = false;
+  radioBegin();                                  // the exact reinit a power cycle forces
+  bootBeacons = 4;                                // announce fast, like a real reboot
+}
+```
+
+`lastTxOkMs` is stamped every time a transmit actually completes. If it goes stale, the node
+reinitialises its own radio and immediately re-announces itself — in software, in seconds,
+instead of waiting for someone to notice and cycle the power. `wedge=` on the `[stat]` line
+counts how many times this has fired; if it climbs, the radio genuinely is glitching (see the
+power/decoupling note in the Phase 3 README) — but the node now recovers on its own either way.
+
+### Also added — manual "Search / Reconnect" (as requested)
+
+A **"Search / Reconnect Nearby Nodes"** button is now on the portal, and `R` on serial does the
+same thing. Both call `manualRescan()`: force a radio reinit (in case it's the same wedge, caught
+early by hand) and rebroadcast immediately rather than waiting for the next scheduled heartbeat.
+Use it if a node has vanished from another node's `Conn:` list and hasn't come back on its own.
+
+## Test procedure — verify the fix
+
+### Test 8 — the watchdog actually fires
+Force a wedge is hard to do on demand, so instead confirm the mechanism: leave a node running,
+watch `wedge=` on `s` stay at `0` for 30+ minutes of normal operation (it should — this is a
+last-resort net, not something that should trip in normal conditions).
+
+### Test 9 — manual rescan works
+Press `R` on serial (or the portal button). **Pass:**
+```
+[radio] manual rescan requested (serial) - reinit + fast beacon
+[radio] LoRa OK  SF7 BW125 CRC=on sync=0x2A pwr=17dBm
+```
+and peers log `[mesh] RECONNECTED <id>` within a couple of seconds.
+
+### Test 10 — the long unattended soak
+This is the real test for the original report. Run all three nodes **unattended for several
+hours** (the failure was intermittent, so 30 minutes may not reproduce it). **Pass:** no node
+ever needs a manual power cycle; if one does wedge, `wedge=` increments and `[mesh] LOST` /
+`RECONNECTED` bracket it within `RADIO_WEDGE_MS` (90 s) with no human involved.
+
+## Completion criteria (added)
+
+- [ ] Test 8 — `wedge=0` through a normal 30-min run
+- [ ] Test 9 — manual rescan (button and `R`) reinitialises and reconnects
+- [ ] **Test 10 — an unattended multi-hour run needs zero power cycles**

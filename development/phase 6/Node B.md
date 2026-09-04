@@ -605,6 +605,7 @@ uint32_t txStart = 0;             // when it started, for the timeout
 uint16_t msgIdCounter = 0;
 
 uint32_t statTx = 0, statRx = 0, statBad = 0, statDrop = 0;
+uint32_t statWedge = 0;       // number of times the radio was force-reinitialised
 uint32_t statFwd = 0, statDataTx = 0, statDataRx = 0;
 uint32_t statTxStuck = 0;         // transmits that never reported TX_DONE
 
@@ -621,6 +622,18 @@ uint8_t  uiPage = 0;
 // A node that has just booted sends a few quick heartbeats so its peers
 // rediscover it in seconds instead of waiting a whole HB_INTERVAL_MS.
 uint8_t  bootBeacons = 4;
+
+// RADIO HEALTH WATCHDOG.
+// radioOk is set true once at boot and NEVER set false again at runtime, so
+// if the SX1278 wedges internally - a state only a real hardware reset
+// clears - nothing in software ever notices, and it stays "connected but
+// silent" forever. The one signal that cannot lie: OUR OWN heartbeat is
+// generated every HB_INTERVAL_MS regardless of whether anyone is nearby, so
+// if it has not gone out in a long time the local radio - not the RF link -
+// is broken. lastTxOkMs tracks the last successful transmit; if it goes
+// stale, radioWatchdog() forces the same reinit a power cycle would do.
+#define RADIO_WEDGE_MS       90000UL   // ~11 missed heartbeats
+uint32_t lastTxOkMs = 0;
 
 // Loop-time instrumentation. The radio only listens while parsePacket() has
 // it armed, so a long loop pass = a deaf radio. maxloop on the stat line is
@@ -726,6 +739,42 @@ bool radioBegin() {
   return false;
 }
 
+// Called every loop. If our own heartbeat has not gone out in RADIO_WEDGE_MS,
+// force the exact reinit sequence radioBegin() does at boot - the same thing
+// a power cycle achieves, without the power cycle.
+void radioWatchdog() {
+  if (!radioOk) return;                          // the boot-failure retry path handles this
+  if (millis() - lastTxOkMs < RADIO_WEDGE_MS) return;
+
+  statWedge++;
+  Serial.printf("[radio] WEDGED - no successful TX in %lus, forcing reinit (#%lu)\n",
+                (unsigned long)(RADIO_WEDGE_MS / 1000UL), (unsigned long)statWedge);
+  radioOk = false;
+  if (radioBegin()) {
+    Serial.println("[radio] reinit OK");
+    bootBeacons = 4;              // announce ourselves fast, like a real reboot would
+    hbTimer.begin(3000UL, 0);
+  } else {
+    Serial.println("[radio] reinit FAILED - will keep retrying");
+  }
+  lastTxOkMs = millis();          // don't re-trigger before the reinit has a chance to prove itself
+}
+
+// Manual "search for nearby nodes" - the portal button and serial 'R' both
+// call this. It does what the automatic watchdog does (reinit the radio, in
+// case it is quietly wedged) PLUS announces us immediately instead of
+// waiting for the next heartbeat, so a genuine "is anyone out there" check
+// gets an answer in seconds rather than up to HB_INTERVAL_MS.
+void manualRescan(const char *why) {
+  Serial.printf("[radio] manual rescan requested (%s) - reinit + fast beacon\n", why);
+  radioOk = false;
+  radioBegin();
+  bootBeacons = 4;
+  hbTimer.begin(1000UL, 0);       // first beacon in ~1s, not the usual jittered wait
+  rtTimer.begin(2000UL, 0);
+  lastTxOkMs = millis();
+}
+
 bool radioEnqueue(const char *frame) {
   if (!frame || !*frame) return false;
   if (txCount >= TX_QUEUE_DEPTH) { statDrop++; return false; }
@@ -762,6 +811,7 @@ void radioService() {
     if (millis() - txStart < TX_AIRTIME_MS) return;   // still on air
     txInFlight = false;                 // parsePacket() re-arms RX next loop
     statTx++;
+    lastTxOkMs = millis();              // proof the local radio still works
     txLast = millis();
     txGap  = TX_MIN_GAP_MS + (uint32_t)random(0, TX_GAP_JITTER_MS);
     return;
@@ -1125,7 +1175,14 @@ them here - this always works.</div>
 <div class="k" id="mystat" style="margin-top:8px">status: --</div>
 </div>
 
-<div class="card"><div class="k">Mesh nodes</div><div class="n" id="nb">--</div></div>
+<div class="card">
+<div class="k">Mesh nodes</div>
+<div class="n" id="nb">--</div>
+<button class="s" onclick="rescan()" style="margin-top:10px">Search / Reconnect Nearby Nodes</button>
+<div class="hint" id="rescanmsg">Use this if a node has vanished from the list and hasn't come back.
+Reinitialises this node's radio and rebroadcasts immediately - the same
+recovery a power-cycle used to require.</div>
+</div>
 
 <script>
 function msg(t){document.getElementById('m').textContent=t}
@@ -1134,6 +1191,10 @@ function send(a,b,c){post('/api/loc?lat='+a+'&lon='+b+'&acc='+(c||0),msg)}
 function sos(){if(confirm('Broadcast an SOS to the whole mesh?')){post('/api/sos',function(t){document.getElementById('sm').textContent=t})}}
 function rpt(c){post('/api/report?code='+c,function(t){document.getElementById('sm').textContent=t})}
 function st(s){post('/api/teamstatus?state='+s,function(t){document.getElementById('sm').textContent=t})}
+function rescan(){
+ document.getElementById('rescanmsg').textContent='Reconnecting...';
+ post('/api/rescan',function(t){document.getElementById('rescanmsg').textContent=t});
+}
 function share(){
  if(!navigator.geolocation){msg('This browser has no geolocation API. Use manual entry below.');return}
  msg('Requesting location...');
@@ -1254,6 +1315,13 @@ void handleTeamStatus() {
   server.send(200, "text/plain", "Status updated.");
 }
 
+void handleRescan() {
+  manualRescan("portal");
+  server.send(200, "text/plain",
+             "Reconnecting - radio reinitialised, broadcasting now. "
+             "Give it a few seconds and refresh.");
+}
+
 void portalBegin() {
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
@@ -1270,6 +1338,7 @@ void portalBegin() {
   server.on("/api/sos", handleSos);
   server.on("/api/report", handleReport);
   server.on("/api/teamstatus", handleTeamStatus);
+  server.on("/api/rescan", handleRescan);
 
   // Connectivity-check URLs the phones probe. Returning our page (rather than
   // the 204 / "Success" they expect) is what triggers the portal popup.
@@ -2066,7 +2135,7 @@ void printStats() {
   Serial.printf(" wifi=%d", (int)WiFi.softAPgetStationNum());
 #endif
   double lat, lon; uint32_t ageMs;
-  Serial.printf(" loc=%s gps=%s/%d nmea=%lu maxloop=%lums minheap=%lu stack=%lu txstuck=%lu rst=%s\n",
+  Serial.printf(" loc=%s gps=%s/%d nmea=%lu maxloop=%lums minheap=%lu stack=%lu txstuck=%lu wedge=%lu rst=%s\n",
                 locSrcName(locBest(lat, lon, ageMs)),
                 gpsHasFix ? "FIX" : "nofix", gpsSats,
                 (unsigned long)gpsSentences,
@@ -2074,6 +2143,7 @@ void printStats() {
                 (unsigned long)esp_get_minimum_free_heap_size(),
                 (unsigned long)uxTaskGetStackHighWaterMark(NULL),
                 (unsigned long)statTxStuck,
+                (unsigned long)statWedge,
                 resetReasonShort());
   maxLoopMs = 0;                 // report the peak per interval, not since boot
 }
@@ -2152,6 +2222,9 @@ void handleSerial() {
   } else if (c == '7') { sendStatus("NEED_ASSIST");
   } else if (c == '8') { sendStatus("EMERGENCY");
 
+  } else if (c == 'R') {
+    manualRescan("serial");
+
   } else if (c == 'v') {
     verboseRx = !verboseRx;
     Serial.printf("[ui] per-packet rx logging %s\n", verboseRx ? "ON" : "off");
@@ -2175,7 +2248,7 @@ void handleSerial() {
     Serial.println("  SOS:  S=trigger SOS  C=clear alert");
     Serial.println("  report 1=VictimFound 2=Medical 3=Blocked 4=Danger");
     Serial.println("  status 5=Available 6=Searching 7=NeedAssist 8=Emergency");
-    Serial.println("  diag:  v=toggle rx log  N=raw NMEA dump (5s)");
+    Serial.println("  diag:  v=toggle rx log  N=raw NMEA dump (5s)  R=manual rescan/reconnect");
   }
 }
 
@@ -2227,6 +2300,7 @@ void setup() {
   Serial.printf("[gps] Serial2 %d baud on RX%d/TX%d\n", GPS_BAUD, GPS_RX_PIN, GPS_TX_PIN);
 
   // STEP 3: radio
+  lastTxOkMs = millis();          // don't let the wedge watchdog fire before we even try
   if (radioBegin()) {
     Serial.printf("[radio] LoRa OK  SF%d BW125 CRC=on sync=0x%02X pwr=%ddBm\n",
                   (int)LORA_SF, (int)LORA_SYNCWORD, (int)LORA_TXPOWER);
@@ -2316,11 +2390,12 @@ void loop() {
   if (uiTimer.due())   drawUI();
   if (statTimer.due()) printStats();
 
-  // 8. recover a radio that failed at boot
+  // 8. recover a radio that failed at boot, or force a reinit if it wedged
   if (!radioOk && retryTimer.due()) {
     Serial.println("[radio] retrying init...");
     if (radioBegin()) Serial.println("[radio] recovered");
   }
+  radioWatchdog();
 
   // 9. serial commands
   handleSerial();
