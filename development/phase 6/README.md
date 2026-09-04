@@ -311,3 +311,50 @@ ever needs a manual power cycle; if one does wedge, `wedge=` increments and `[me
 - [ ] Test 8 — `wedge=0` through a normal 30-min run
 - [ ] Test 9 — manual rescan (button and `R`) reinitialises and reconnects
 - [ ] **Test 10 — an unattended multi-hour run needs zero power cycles**
+
+---
+
+## Revision — Node A: portal button did nothing, OLED frozen, then a full reset
+
+This report was worse than the earlier disconnect fix: the **entire node** stopped responding —
+OLED frozen, portal not answering the "Search / Reconnect" button, for minutes — then it came
+back on its own after a reset. If only the radio had wedged, the OLED would have kept updating
+(drawing is independent of the radio) and the portal would have kept working (`WebServer` doesn't
+touch the radio either). Both freezing together means `loop()` itself stopped running, which also
+explains why the radio watchdog from the previous revision didn't help: **it lives inside
+`loop()`, so it can't run if `loop()` isn't running.**
+
+### Root cause: an I2C hang, made worse by the previous fix
+
+The ESP32 `Wire` library has **no timeout by default.** If an I2C slave ever glitches or holds a
+clock-stretch mid-transaction, `Wire` can block **forever** — not just the display call, the whole
+`loop()`, since everything (radio, watchdog, `WebServer.handleClient()`) runs from the same task.
+
+The earlier revision raised the I2C clock to 400 kHz specifically to shrink the OLED's blocking
+window. That made the *opposite* problem worse: 400 kHz is out of spec for many SH1106 clone
+modules on breadboard wiring (higher clock = less margin against the extra capacitance of long
+jumper wires), which is consistent with this happening on **Node A specifically** — it's the one
+SH1106/U8g2 node; B and C are SSD1306/Adafruit.
+
+### Fix
+
+- **`Wire.setTimeOut(50)`** — the actual safety net. A stuck I2C transaction now fails after
+  50 ms instead of hanging forever. Worst case is one garbled/skipped OLED frame; `loop()`,
+  the radio, the watchdog, and the portal all keep running regardless of what the display does.
+- I2C clock **400 kHz → 100 kHz** (standard rate) — more headroom on real wiring, less likely to
+  need the timeout in the first place.
+- To pay for the slower clock without reopening the original radio-deafness problem: the uptime
+  and heap fields on the status page are now **rounded** (uptime to 5 s, heap to 200 B) so
+  `oledPush()`'s change-detection actually skips most seconds instead of redrawing every single
+  one because a counter ticked by 1.
+
+If a node still locks up after this, it will now show as `wedge=` climbing on `[stat]` and/or a
+`TASK_WDT` line in `[boot] last reset:` rather than a silent freeze — and the next thing to check
+is the physical SDA/SCL wiring on that specific node (pull-up resistors, wire length, a solid
+breadboard connection) rather than firmware.
+
+## Completion criteria (added)
+
+- [ ] Node A: portal "Search / Reconnect" responds within a couple of seconds, every time
+- [ ] No node's OLED freezes for more than the ~1 s refresh interval, over a multi-hour run
+- [ ] If `[boot] last reset:` ever shows `TASK_WDT` again, the wiring on that node needs checking

@@ -14,12 +14,16 @@
 //     parsePacket() arms the SX1278 in RX_SINGLE, which listens for about
 //     100 ms and then drops to STANDBY until the next poll. Anything that
 //     stalls loop() therefore makes the radio deaf. The worst offender was
-//     drawUI(): a 1 KB frame over I2C at the ESP32 default 100 kHz is ~100 ms,
-//     every single second. Fixed by
-//        * Wire.setClock(400000)      - 4x faster frame push
-//        * oledPush() skips the redraw entirely when nothing changed
+//     drawUI(): a 1 KB frame over I2C at 100 kHz is ~100 ms, every second.
+//     Fixed by
+//        * oledPush() skips the redraw entirely when nothing changed, and
+//          the uptime/heap fields are now rounded so they actually count as
+//          "unchanged" most seconds instead of forcing a redraw every time
 //        * the per-packet [rx] Serial line (~10 ms each) is now off by
 //          default, toggled with 'v'
+//     (an earlier revision of this fix raised the I2C clock to 400 kHz
+//     instead of reducing redraw frequency - that turned out to hang some
+//     SH1106 modules on breadboard wiring; see the I2C revision below)
 //     and MEASURED by the new  maxloop=  field on the [stat] line. If that
 //     stays in single-digit ms the radio is listening essentially all the time.
 //
@@ -129,7 +133,8 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define OLED_REFRESH_MS       1000UL   // redraw is skipped when nothing changed
 #define UI_PAGE_MS            4000UL   // how long each OLED page is shown
 #define RECONNECT_HB_MS       4000UL   // faster beacon while a neighbour is missing
-#define I2C_HZ              400000L   // 100kHz default made drawUI stall ~100ms
+#define I2C_HZ              100000L   // standard rate - see the I2C section below
+#define I2C_TIMEOUT_MS           50   // MUST be set or a glitching OLED can hang loop() forever
 #define STAT_LOG_MS          30000UL
 #define TX_MIN_GAP_MS          150UL   // the airtime wait above already spaces us out
 #define TX_GAP_JITTER_MS       250UL
@@ -1973,9 +1978,14 @@ void drawPage0() {
     snprintf(l3, sizeof(l3), "%s s%d age%lus",
              locSrcName(src), gpsSats, (unsigned long)(ageMs / 1000UL));
   }
+  // Rounded, not exact - so oledPush()'s change-detection actually detects
+  // "nothing changed" most seconds instead of redrawing every single second
+  // because the uptime clock or a few bytes of heap ticked over. Fewer
+  // redraws = less I2C bus time = less exposure to an I2C hang (see the I2C
+  // timeout note in setup()).
   snprintf(l4, sizeof(l4), "heap %lu up%lus",
-           (unsigned long)ESP.getFreeHeap(),
-           (unsigned long)(millis() / 1000UL));
+           (unsigned long)((ESP.getFreeHeap() / 200) * 200),
+           (unsigned long)((millis() / 5000UL) * 5));
 
   char pg[5][26];
   snprintf(pg[0], 26, "%s", l0); snprintf(pg[1], 26, "%s", l1);
@@ -2274,7 +2284,16 @@ void setup() {
 
   // STEP 1: display
   Wire.begin(I2C_SDA, I2C_SCL);
-  Wire.setClock(I2C_HZ);          // 100kHz default stalled the loop ~100ms per frame
+  // CRITICAL: the ESP32 Wire library has no timeout by default. If the OLED
+  // ever glitches or clock-stretches mid-transaction, Wire can block INSIDE
+  // loop() forever - not just the display, everything hanging off loop():
+  // the radio, the watchdog logic that recovers it, and the portal's
+  // handleClient(), which is exactly what "button does nothing, OLED frozen,
+  // eventually reboots" looks like. This is the actual safety net; the clock
+  // speed below just makes it less likely to be needed.
+  Wire.setTimeOut(I2C_TIMEOUT_MS);
+  Wire.setClock(I2C_HZ);           // standard 100kHz - more reliable than 400kHz on
+                                    // the breadboard wiring most SH1106 clones ship with
   oledOk = display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
   if (!oledOk) oledOk = display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
   if (oledOk) {
