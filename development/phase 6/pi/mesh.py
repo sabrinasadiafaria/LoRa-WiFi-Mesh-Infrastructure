@@ -154,6 +154,12 @@ class Mesh:
             if len(self._txq) < 8:
                 self._txq.append(frame)
 
+    def _seen_forget(self, src):
+        """Drop a node's cached ids. A node that rebooted restarts its msgId
+        at 1, and its old ids sitting in the ring would filter the fresh
+        packets as duplicates - which is how a returning node stayed lost."""
+        self._seen = [k for k in self._seen if k[0] != src]
+
     def _seen_or_add(self, src, msgid):
         key = (src, msgid)
         if key in self._seen:
@@ -193,7 +199,7 @@ class Mesh:
                 self.on_event("node", {"id": nid, "state": "lost"})
 
     def _send_hb(self):
-        payload = f"{int(time.time())},{0},{5}"      # uptime,heap,fwver (fw 5 = phase 5)
+        payload = f"{int(time.time())},{0},{6}"      # uptime,heap,fwver
         self._enqueue(build("HB", MY_ID, "*", self.next_msgid(), 0, payload))
 
     def _send_rt(self):
@@ -228,6 +234,7 @@ class Mesh:
         self.neighbors[src].update(rssi=rssi, snr=snr, last=now, active=True)
         self._route_update(src, src, 1, rssi)
         if fresh:
+            self._seen_forget(src)      # it may have rebooted and reset its msgIds
             self.on_event("node", {"id": src, "state": "up", "rssi": rssi})
 
         t = pkt["type"]

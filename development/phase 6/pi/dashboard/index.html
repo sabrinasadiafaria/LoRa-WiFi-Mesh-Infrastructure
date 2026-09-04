@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAR Command Centre</title>
+<link rel="stylesheet" href="leaflet/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="sosbar" class="hidden"></div>
+
+<header>
+  <h1>SAR Command Centre</h1>
+  <span id="clock"></span>
+  <span id="link" class="pill">connecting</span>
+</header>
+
+<div id="main">
+  <div id="map"></div>
+
+  <aside>
+    <section>
+      <h2>Nodes</h2>
+      <table id="nodes"><thead><tr>
+        <th>ID</th><th>State</th><th>RSSI</th><th>Route</th><th>Seen</th>
+      </tr></thead><tbody></tbody></table>
+    </section>
+
+    <section>
+      <h2>Team status</h2>
+      <table id="status"><tbody></tbody></table>
+    </section>
+
+    <section>
+      <h2>Send to node</h2>
+      <div class="row">
+        <select id="dest"><option>A</option><option>B</option><option>C</option><option>*</option></select>
+        <input id="msg" placeholder="message to show on the node OLED">
+        <button onclick="sendMsg()">Send</button>
+      </div>
+      <div class="row">
+        <select id="cdest"><option>A</option><option>B</option><option>C</option></select>
+        <button onclick="cmd('WHERE')">Ask position</button>
+        <button onclick="cmd('SOS')" class="danger">Trigger SOS</button>
+        <button onclick="cmd('SOSCLR')">Clear SOS</button>
+      </div>
+      <div id="sendmsg"></div>
+    </section>
+
+    <section>
+      <h2>Reports</h2>
+      <ul id="reports"></ul>
+    </section>
+
+    <section>
+      <h2>Messages</h2>
+      <ul id="messages"></ul>
+    </section>
+  </aside>
+</div>
+
+<script src="leaflet/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

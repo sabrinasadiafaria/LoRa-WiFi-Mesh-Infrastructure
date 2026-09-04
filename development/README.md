@@ -25,7 +25,8 @@ development/
 ├── phase 3/         multi-hop mesh: routing + forwarding + self-healing
 ├── phase 4/         SOS button + rescue messaging
 ├── phase 5/         Pi joins mesh (own SX1278) + web dashboard
-├── phase 6/         autonomous rover
+├── phase 6/         reliability + GPS fixes (nodes staying joined)
+├── phase 7/         autonomous rover
 └── pi/              Python service + web dashboard (used from phase 5)
 ```
 
@@ -63,9 +64,10 @@ exactly one file per board.
 | 3 | Unified mesh — routing, multi-hop, self-healing | A→C via B; kill/restore B |
 | 4 | SOS button + rescue messaging | SOS auto-clears; reaches whole mesh |
 | 5 | Pi command centre (own LoRa) + web dashboard | every event on the map; commands out |
-| 6 | Autonomous rover + mobile relay | 5 min collision-free; relay restores A↔C |
-| 7 | Integration, tuning, field/range test | end-to-end scenario passes 3× |
-| 8 | Demo script + documentation | clean-room reproduction succeeds |
+| 6 | Reliability + GPS | maxloop single-digit ms; lost node rejoins in ~5s |
+| 7 | Autonomous rover + mobile relay | 5 min collision-free; relay restores A↔C |
+| 8 | Integration, tuning, field/range test | end-to-end scenario passes 3× |
+| 9 | Demo script + documentation | clean-room reproduction succeeds |
 
 Detailed flashing instructions: `docs/BUILD_AND_FLASH.md`.
 
@@ -79,6 +81,7 @@ Detailed flashing instructions: `docs/BUILD_AND_FLASH.md`.
 | 3 Multi-hop mesh + self-healing | 🟡 code written — awaiting hardware verification |
 | 4 SOS + rescue messaging | 🟡 code written — awaiting hardware verification |
 | 5 Pi command centre + dashboard | 🟡 code written — awaiting hardware verification |
-| 6 Autonomous rover | ⬜ not started |
-| 7 Integration & field test | ⬜ not started |
-| 8 Demo & documentation | ⬜ not started |
+| 6 Reliability + GPS | 🟡 code written — awaiting hardware verification |
+| 7 Autonomous rover | ⬜ not started |
+| 8 Integration & field test | ⬜ not started |
+| 9 Demo & documentation | ⬜ not started |
