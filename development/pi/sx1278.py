@@ -99,7 +99,30 @@ class SX1278:
         self.spi.open(SPI_BUS, SPI_DEV)
         self.spi.max_speed_hz = SPI_HZ
         self.spi.mode = 0
-        self._rst = OutputDevice(RST_PIN, active_high=False, initial_value=False) if _HAVE_GPIO else None
+        self._rst = self._claim_rst_pin() if _HAVE_GPIO else None
+
+    @staticmethod
+    def _claim_rst_pin():
+        # gpiozero raises here if GPIO25 is already held by another process -
+        # almost always a PREVIOUS run of this script still alive (main.py did
+        # not exit cleanly: killed with -9, a crashed thread, a second
+        # terminal, or the systemd service still running). gpiozero's own
+        # atexit hook releases the pin on a clean exit, so a "still claimed"
+        # pin means something is still running, not that the wiring is wrong.
+        try:
+            return OutputDevice(RST_PIN, active_high=False, initial_value=False)
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not claim GPIO{RST_PIN} (SX1278 RST): {e}\n\n"
+                f"This almost always means another process still has it open.\n"
+                f"  1) ps aux | grep main.py            # find it\n"
+                f"  2) kill <pid>            (or: sudo pkill -f main.py)\n"
+                f"  3) systemctl is-active sar-pi        # a service instance running too?\n"
+                f"     sudo systemctl stop sar-pi\n"
+                f"If nothing is running and this still happens after a reboot, "
+                f"something else has claimed GPIO{RST_PIN} - move RST to a spare "
+                f"GPIO (edit RST_PIN here) rather than fighting it."
+            ) from e
 
     # ---- low level ------------------------------------------------------
     def _read(self, addr):
@@ -255,3 +278,14 @@ class SX1278:
             self.spi.close()
         except Exception:
             pass
+        # Release GPIO25 explicitly. gpiozero also does this via its own
+        # atexit hook on a clean interpreter exit, but main.py can be asked
+        # to shut down and start a fresh SX1278() again in the same process
+        # (tests, --fake-radio switching) - only an explicit .close() here
+        # guarantees the pin is free before that happens.
+        if self._rst is not None:
+            try:
+                self._rst.close()
+            except Exception:
+                pass
+            self._rst = None

@@ -1017,7 +1017,9 @@ void oledPush(char l[5][26]) {
   }
   uiPrevValid = true;
 
-  oledPush(l);
+  oledClear();
+  for (uint8_t i = 0; i < 5; i++) oledLine(i, l[i]);
+  oledShow();
 }
 
 // oledBanner() writes directly, so make sure the next oledPush() redraws.

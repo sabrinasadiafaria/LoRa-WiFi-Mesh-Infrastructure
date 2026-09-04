@@ -7,7 +7,8 @@ joined the mesh:
 2. a lost node could not rejoin
 3. the GPS module "should work properly"
 
-**Flash all three node sketches, and re-copy `pi/` to the Pi** (its timings changed to match).
+**Flash all three node sketches.** The Pi side of this phase now lives in
+[`development/pi/`](../pi/) — see the note there and the Revision section below.
 
 ---
 
@@ -175,6 +176,60 @@ Record results in `../docs/TEST_REPORT.md`.
 
 ## Pi side
 
-`pi/` is unchanged except `mesh.py`: timings aligned with the nodes (HB 8 s, neighbour 45 s,
-route 60 s) and `_seen_forget()` added so the Pi also re-accepts a rebooted node immediately.
-Copy the folder over and restart the service.
+The Pi codebase moved to [`development/pi/`](../pi/) — one canonical copy instead of duplicating
+it into every phase folder (see the Revision below for why). Changes this phase:
+`mesh.py` timings aligned with the nodes (HB 8 s, neighbour 45 s, route 60 s) and `_seen_forget()`
+added so the Pi also re-accepts a rebooted node immediately.
+
+---
+
+## Revision — critical fix: `oledPush()` was calling itself
+
+**Root cause of "nodes rebooting, not rejoining, OLED stuck."** The change-detecting display
+function introduced earlier in this phase had a copy-paste defect: instead of drawing, it called
+**itself**:
+
+```c
+void oledPush(char l[5][26]) {
+  ...
+  oledPush(l);   // <-- should have been oledClear(); ...; oledShow();
+}
+```
+
+Every time anything on screen changed — which is most seconds, since the uptime counter alone
+changes — this recursed until the stack overflowed, crashing the node. The watchdog or a stack-guard
+trap then reset it, and because the crash happened mid-draw, the OLED was left showing whatever
+was on it before the crash: **stuck**. This also explains why nodes struggled to be found again —
+a node stuck in a reboot loop is off the air far more than it's on it.
+
+Fixed in all three sketches: `oledPush()` now actually clears, draws, and shows.
+
+## Revision — Pi: GPIO25 "already claimed" + one canonical `pi/`
+
+Two Pi-side fixes, from a report that `main.py` failed with the RST pin (GPIO25) already held by
+another process, and that testing a change meant re-downloading Leaflet and the Dhaka map tiles.
+
+**Restructured to one location.** `development/pi/` is now canonical — it is *not* copied into
+`phase 5/pi/` or `phase 6/pi/` any more (those now just point here). Vendor Leaflet and run
+`download_tiles.py` **once**, here; every future phase's Pi fixes land in the same folder and the
+cache is never touched again.
+
+**Fixed the actual GPIO leak.** `main.py` blocks in `server.app.run()`; a `KeyboardInterrupt`
+(Ctrl+C) propagated straight past the `m.stop(); radio.close()` lines that were written *after*
+it, so they never ran — the RST `OutputDevice` was never released, and the next launch found
+GPIO25 still claimed. Fixed:
+- `app.run()` is now wrapped in `try/finally`, so cleanup always runs
+- a `SIGTERM` handler is registered too (`systemctl stop` doesn't raise `KeyboardInterrupt` on its
+  own)
+- `SX1278.close()` now actually calls `self._rst.close()` — it never did before, it only closed
+  the SPI handle
+- if the pin genuinely is held by something else, `SX1278()` now raises a message with the exact
+  commands to find and stop it, instead of a bare gpiozero traceback
+
+If you still see the claim error after pulling this: something is already running.
+```bash
+ps aux | grep main.py          # find it
+kill <pid>                     # or: sudo pkill -f main.py
+systemctl is-active sar-pi      # a service instance too?
+sudo systemctl stop sar-pi
+```

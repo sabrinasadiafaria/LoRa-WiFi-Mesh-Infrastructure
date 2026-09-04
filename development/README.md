@@ -24,11 +24,17 @@ development/
 ├── phase 2/         hybrid location: GPS module + phone via captive portal
 ├── phase 3/         multi-hop mesh: routing + forwarding + self-healing
 ├── phase 4/         SOS button + rescue messaging
-├── phase 5/         Pi joins mesh (own SX1278) + web dashboard
-├── phase 6/         reliability + GPS fixes (nodes staying joined)
+├── phase 5/         Node sketches: Pi joins mesh + CMD handler   (Pi code: see pi/ below)
+├── phase 6/         Node sketches: reliability + GPS fixes       (Pi code: see pi/ below)
 ├── phase 7/         autonomous rover
-└── pi/              Python service + web dashboard (used from phase 5)
+└── pi/              THE Raspberry Pi codebase - one canonical copy, not duplicated
+                     per phase. Accumulates every phase's Pi-side fixes, the same
+                     way the node sketches accumulate ESP32-side fixes.
 ```
+
+> **`pi/` is not phase-numbered.** Early on it was copied into `phase 5/pi/` and
+> `phase 6/pi/`, which meant re-vendoring Leaflet and re-downloading the map tile cache on every
+> change. It's now one location (`development/pi/`); each phase's README says what changed there.
 
 > Phase 2 was inserted after the original plan was written: the user asked for hybrid
 > GPS-module / phone location earlier than the plan's Phase 3+4, so location and the captive

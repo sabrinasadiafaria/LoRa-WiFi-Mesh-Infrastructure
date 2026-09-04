@@ -16,6 +16,11 @@ back out to any node.
 No USB gateway. The Pi is a peer: it sends `HB` and `RT` so the mesh keeps a route to it, and it
 relays traffic like any node.
 
+> **Run the Pi code from [`development/pi/`](../pi/), not from inside this phase folder.**
+> It used to be duplicated into every phase (`phase 5/pi/`, `phase 6/pi/`), which meant
+> re-vendoring Leaflet and re-downloading the Dhaka map tiles on every change. It now lives in
+> one canonical location that accumulates every phase's fixes, the same way the node sketches do.
+
 ---
 
 ## Two parts
@@ -34,7 +39,7 @@ Phase 4 firmware **plus** a `CMD` handler so the Pi can command a node:
 Everything else (SOS button, portal, reports, status, multi-hop, self-healing, reconnect) is
 unchanged from Phase 4. Flash all three as before.
 
-### 2. The Pi — `pi/`
+### 2. The Pi — `development/pi/` (canonical, not copied per phase — see note below)
 
 | File | What |
 |---|---|
@@ -77,7 +82,7 @@ If you change `LORA_SF` in the sketches, change `SF` in `sx1278.py` too.
 ## Install & run (Pi has internet)
 
 ```bash
-cd "LoRa-WiFi-Mesh-Infrastructure/development/phase 5/pi"
+cd "LoRa-WiFi-Mesh-Infrastructure/development/pi"
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 

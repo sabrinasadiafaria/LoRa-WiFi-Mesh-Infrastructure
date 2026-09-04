@@ -10,6 +10,7 @@ Starts the mesh loop (its own thread) and the Flask dashboard on :8000.
 """
 
 import argparse
+import signal
 import sys
 import time
 
@@ -82,13 +83,28 @@ def main():
     print(f"SAR Command Centre up.  dashboard: http://<pi-ip>:{args.port}/")
     print(f"node id: PI   radio: {'FAKE' if args.fake_radio else 'SX1278 @ 433MHz SF7'}")
 
-    # Flask dev server is fine for a single-viewer lab dashboard. For a few
-    # concurrent viewers use: waitress-serve --port 8000 --call server:app
-    server.app.run(host="0.0.0.0", port=args.port, threaded=True,
-                   use_reloader=False)
+    # SIGTERM (systemctl stop / kill, no -9) doesn't raise KeyboardInterrupt
+    # in the main thread by default - without this handler the process just
+    # dies mid-syscall and the RST GPIO is left claimed for the next run.
+    def _on_term(signum, frame):
+        raise KeyboardInterrupt
 
-    m.stop()
-    radio.close()
+    signal.signal(signal.SIGTERM, _on_term)
+
+    try:
+        # Flask dev server is fine for a single-viewer lab dashboard. For a
+        # few concurrent viewers use: waitress-serve --port 8000 --call server:app
+        server.app.run(host="0.0.0.0", port=args.port, threaded=True,
+                       use_reloader=False)
+    except KeyboardInterrupt:
+        print("\nshutting down...")
+    finally:
+        # MUST run on every exit path (Ctrl+C, systemctl stop, a crash in
+        # app.run) or the SX1278 RST GPIO stays claimed and the next launch
+        # fails with "Could not claim GPIO25". This used to sit unreachable
+        # below app.run() - a KeyboardInterrupt skipped straight past it.
+        m.stop()
+        radio.close()
 
 
 if __name__ == "__main__":
