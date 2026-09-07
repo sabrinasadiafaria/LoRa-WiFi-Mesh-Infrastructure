@@ -26,7 +26,8 @@ development/
 ├── phase 4/         SOS button + rescue messaging
 ├── phase 5/         Node sketches: Pi joins mesh + CMD handler   (Pi code: see pi/ below)
 ├── phase 6/         Node sketches: reliability + GPS fixes       (Pi code: see pi/ below)
-├── phase 7/         autonomous rover
+├── phase 7/         range (SF9), GPS buffer, new OLED + portal UI
+├── phase 8/         autonomous rover
 └── pi/              THE Raspberry Pi codebase - one canonical copy, not duplicated
                      per phase. Accumulates every phase's Pi-side fixes, the same
                      way the node sketches accumulate ESP32-side fixes.
@@ -71,9 +72,10 @@ exactly one file per board.
 | 4 | SOS button + rescue messaging | SOS auto-clears; reaches whole mesh |
 | 5 | Pi command centre (own LoRa) + web dashboard | every event on the map; commands out |
 | 6 | Reliability + GPS | maxloop single-digit ms; lost node rejoins in ~5s |
-| 7 | Autonomous rover + mobile relay | 5 min collision-free; relay restores A↔C |
-| 8 | Integration, tuning, field/range test | end-to-end scenario passes 3× |
-| 9 | Demo script + documentation | clean-room reproduction succeeds |
+| 7 | Range + GPS + new UI | longer open-space range; portal/OLED redesign |
+| 8 | Autonomous rover + mobile relay | 5 min collision-free; relay restores A↔C |
+| 9 | Integration, tuning, field/range test | end-to-end scenario passes 3× |
+| 10 | Demo script + documentation | clean-room reproduction succeeds |
 
 Detailed flashing instructions: `docs/BUILD_AND_FLASH.md`.
 
@@ -88,6 +90,7 @@ Detailed flashing instructions: `docs/BUILD_AND_FLASH.md`.
 | 4 SOS + rescue messaging | 🟡 code written — awaiting hardware verification |
 | 5 Pi command centre + dashboard | 🟡 code written — awaiting hardware verification |
 | 6 Reliability + GPS | 🟡 code written — awaiting hardware verification |
-| 7 Autonomous rover | ⬜ not started |
-| 8 Integration & field test | ⬜ not started |
-| 9 Demo & documentation | ⬜ not started |
+| 7 Range + GPS + new UI | 🟡 code written — awaiting hardware verification |
+| 8 Autonomous rover | ⬜ not started |
+| 9 Integration & field test | ⬜ not started |
+| 10 Demo & documentation | ⬜ not started |

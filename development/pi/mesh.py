@@ -21,11 +21,11 @@ import random
 PROTO_VERSION = 1
 MY_ID = "PI"
 
-# match the ESP32 constants
-HB_INTERVAL = 8.0
-RT_INTERVAL = 15.0
-NEIGHBOR_TIMEOUT = 45.0
-ROUTE_TIMEOUT = 60.0
+# match the ESP32 constants (development/phase 7/Node *.md)
+HB_INTERVAL = 15.0
+RT_INTERVAL = 30.0
+NEIGHBOR_TIMEOUT = 75.0
+ROUTE_TIMEOUT = 120.0
 MAX_HOPS = 4
 TX_MIN_GAP = 0.15
 SEEN_CACHE = 64

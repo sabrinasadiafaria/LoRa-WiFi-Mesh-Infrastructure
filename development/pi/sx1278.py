@@ -5,10 +5,10 @@ Deliberately small and register-explicit so the PHY matches the ESP32 nodes
 EXACTLY. The nodes run the Sandeep Mistry LoRa library; this mirrors its
 begin() sequence register for register:
 
-    433 MHz | SF7 | BW 125 kHz | CR 4/5 | explicit header | CRC on
+    433 MHz | SF9 | BW 125 kHz | CR 4/5 | explicit header | CRC on
     sync word 0x2A | preamble 8 | PA_BOOST 17 dBm
 
-If any of those disagree with development/phase 4/*.md the Pi will hear
+If any of those disagree with development/phase 7/Node *.md the Pi will hear
 nothing, so they are all named constants here and cross-checked in the
 README.
 
@@ -44,7 +44,7 @@ RST_PIN = 25                          # BCM
 
 # ---- PHY - MUST match the ESP32 nodes --------------------------------------
 FREQ_HZ = 433_000_000
-SF = 7
+SF = 9                                 # MUST match LORA_SF in the node sketches
 BW_HZ = 125_000
 CR_DENOM = 5                          # 4/5
 TX_POWER_DBM = 17
@@ -229,7 +229,7 @@ class SX1278:
         self._write(REG_OP_MODE, MODE_LONG_RANGE | MODE_RX_CONTINUOUS)
 
     # ---- tx ---------------------------------------------------------
-    def send(self, data: bytes, timeout=2.0):
+    def send(self, data: bytes, timeout=3.0):
         """Blocking transmit. Returns True on TX_DONE, False on timeout."""
         self.standby()
         self._write(REG_DIO_MAPPING_1, 0x40)
