@@ -172,3 +172,44 @@ SSID** — there is no Node-A-specific logic that could single it out. If A stil
 and C at the same distance after this, the remaining difference is **hardware**: its antenna,
 antenna connector, or the SH1106 module's power draw. Swap Node A's antenna with Node B's and see
 whether the problem follows the antenna or stays with the board — that isolates it in one test.
+
+---
+
+## Fix — the portal page would not compile in the Arduino IDE
+
+Phase 7's first upload failed with:
+
+```
+error: expected constructor, destructor, or type conversion before '(' token
+ function esc(s){return String(s).replace(/[&<>"]/g,function(c){
+```
+
+The C++ was valid — one `R"HTML(` opener, one `)HTML"` terminator, pure ASCII in between. The
+problem is the **Arduino IDE's own sketch preprocessor** (the step that generates function
+prototypes): it does not understand C++11 raw string literals and tracks `"` characters naively.
+Phase 7 introduced a JavaScript escape helper containing a **lone `"`** inside a regex character
+class, `/[&<>"]/g`. That single unpaired quote flipped the preprocessor's parity, so it stopped
+recognising `)HTML"` as the end of the string and handed the compiler ~290 lines of HTML/CSS/JS
+as if it were code.
+
+Both halves are fixed:
+
+1. **`esc()` no longer contains a quote.** It escapes `&`, `<`, `>` only — it is used solely on
+   text nodes (peer IDs, SOS victim/text), never inside an HTML attribute, so `&quot;` was never
+   needed.
+2. **The page no longer uses a raw string literal at all.** `PORTAL_HTML` is now conventional
+   adjacent string literals with escaped quotes:
+   ```c
+   const char PORTAL_HTML[] PROGMEM =
+     "<!DOCTYPE html><html lang=\"en\"><head>\n"
+     ...
+   ```
+   Same bytes, same `PROGMEM`, same `server.send_P()` — but nothing left for the preprocessor to
+   misparse. The conversion was verified by reconstructing the original text from the literals and
+   diffing it: byte-identical, 289 lines.
+
+> **Rule going forward:** no `R"(...)"` in these sketches. Any future portal markup goes in as
+> escaped literals.
+
+`Multiple libraries were found for "WiFi.h"` in the same output is only a warning — the IDE
+correctly picks the ESP32 core's copy. Nothing to do about it.

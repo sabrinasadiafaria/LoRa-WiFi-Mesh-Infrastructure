@@ -1137,296 +1137,296 @@ DNSServer dns;
 IPAddress apIP(192, 168, 4, 1);
 bool portalOk = false;
 
-const char PORTAL_HTML[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0b0d10">
-<title>SAR Rescue Portal</title><style>
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-:root{
- --bg:#0b0d10; --card:#151a21; --card2:#1b222b; --line:#252d38;
- --tx:#e8edf3; --dim:#8b96a5; --faint:#5b6675;
- --acc:#ff7a1a; --ok:#2ecc71; --warn:#ffc043; --bad:#ff4d4d; --info:#4da3ff;
-}
-body{margin:0;padding:0 0 28px;font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;
- background:var(--bg);color:var(--tx)}
-.wrap{max-width:640px;margin:0 auto;padding:0 14px}
-
-header{position:sticky;top:0;z-index:20;background:rgba(11,13,16,.94);
- backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:12px 0 10px}
-.htop{display:flex;align-items:center;gap:10px}
-.logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,var(--acc),#ff4d4d);
- display:grid;place-items:center;font-weight:800;font-size:15px;color:#fff;flex:none}
-h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.2px}
-.sub{font-size:11.5px;color:var(--dim);margin-top:1px}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none;
- box-shadow:0 0 0 3px rgba(255,255,255,.04)}
-.dot.on{background:var(--ok);animation:pulse 2s infinite}
-.dot.off{background:var(--bad)}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-
-.alert{margin:12px 0;padding:13px 14px;border-radius:12px;background:#3a0f0f;
- border:1px solid #ff4d4d;animation:flash 1.4s infinite}
-@keyframes flash{0%,100%{border-color:#ff4d4d}50%{border-color:#7a2020}}
-.alert .t{font-weight:750;font-size:14px;letter-spacing:.4px}
-.alert .d{font-size:13px;color:#ffc9c9;margin-top:3px;font-family:ui-monospace,monospace}
-
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;
- padding:14px;margin-top:12px}
-.k{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);
- font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px}
-.k .badge{margin-left:auto;text-transform:none;letter-spacing:0;font-size:11px;
- padding:2px 8px;border-radius:20px;background:var(--card2);color:var(--dim)}
-
-.big{font-size:21px;font-family:ui-monospace,Menlo,monospace;font-weight:600;
- letter-spacing:-.3px;word-break:break-all}
-.meta{font-size:12px;color:var(--dim);margin-top:4px;display:flex;
- align-items:center;gap:7px;flex-wrap:wrap}
-.tag{font-size:10.5px;padding:2px 8px;border-radius:20px;font-weight:600;
- background:var(--card2);color:var(--dim)}
-.tag.gps{background:rgba(46,204,113,.16);color:var(--ok)}
-.tag.phone{background:rgba(77,163,255,.16);color:var(--info)}
-.tag.none{background:rgba(255,77,77,.16);color:var(--bad)}
-.tag.stale{background:rgba(255,192,67,.16);color:var(--warn)}
-
-button{font:inherit;border:0;border-radius:11px;padding:13px;font-weight:650;
- cursor:pointer;transition:transform .08s,filter .15s;width:100%}
-button:active{transform:scale(.975)}
-button:disabled{opacity:.5}
-.sos{background:linear-gradient(135deg,#ff3b3b,#c81e1e);color:#fff;font-size:18px;
- padding:20px;letter-spacing:.5px;box-shadow:0 6px 18px rgba(255,59,59,.25)}
-.pri{background:var(--acc);color:#fff}
-.sec{background:var(--card2);color:var(--tx);border:1px solid var(--line)}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.grid2 button{padding:12px 8px;font-size:13.5px}
-
-input{width:100%;padding:12px;margin:5px 0;border-radius:10px;font-size:15px;
- border:1px solid var(--line);background:#080a0d;color:var(--tx)}
-input:focus{outline:0;border-color:var(--acc)}
-.hint{font-size:11.5px;color:var(--faint);margin-top:8px;line-height:1.5}
-
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{text-align:left;font-size:10px;letter-spacing:.07em;text-transform:uppercase;
- color:var(--faint);font-weight:600;padding:0 0 6px}
-td{padding:7px 0;border-top:1px solid var(--line);font-family:ui-monospace,monospace}
-tr:first-child td{border-top:0}
-.nid{font-weight:700;font-family:system-ui,sans-serif}
-.bars{display:inline-flex;gap:2px;vertical-align:middle}
-.bars i{width:3px;border-radius:1px;background:var(--line);display:block}
-.bars i:nth-child(1){height:5px}.bars i:nth-child(2){height:8px}
-.bars i:nth-child(3){height:11px}.bars i:nth-child(4){height:14px}
-.bars.s1 i:nth-child(-n+1),.bars.s2 i:nth-child(-n+2),
-.bars.s3 i:nth-child(-n+3),.bars.s4 i:nth-child(-n+4){background:var(--ok)}
-.bars.s1 i:nth-child(-n+1){background:var(--bad)}
-.bars.s2 i:nth-child(-n+2){background:var(--warn)}
-.lost{color:var(--bad);font-size:11.5px}
-.empty{color:var(--faint);font-size:13px;padding:8px 0;text-align:center}
-
-#toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,80px);
- background:var(--card2);border:1px solid var(--line);color:var(--tx);
- padding:11px 18px;border-radius:11px;font-size:13.5px;z-index:60;
- transition:transform .28s cubic-bezier(.2,.9,.3,1.3);max-width:90vw;
- box-shadow:0 8px 24px rgba(0,0,0,.5)}
-#toast.show{transform:translate(-50%,0)}
-#toast.good{border-color:var(--ok)} #toast.err{border-color:var(--bad)}
-
-details{margin-top:12px}
-summary{cursor:pointer;list-style:none;padding:13px 14px;background:var(--card);
- border:1px solid var(--line);border-radius:14px;font-size:13px;color:var(--dim);
- font-weight:600;display:flex;align-items:center}
-summary::-webkit-details-marker{display:none}
-summary:after{content:"+";margin-left:auto;font-size:17px;color:var(--faint)}
-details[open] summary{border-radius:14px 14px 0 0;color:var(--tx)}
-details[open] summary:after{content:"-"}
-details .card{margin-top:0;border-radius:0 0 14px 14px;border-top:0}
-</style></head><body>
-<div class="wrap">
-
-<header>
- <div class="htop">
-  <div class="logo">SAR</div>
-  <div style="min-width:0">
-   <h1>Rescue Portal</h1>
-   <div class="sub" id="sub">connecting...</div>
-  </div>
-  <div class="dot" id="dot"></div>
- </div>
-</header>
-
-<div id="alertbox"></div>
-
-<div class="card" style="text-align:center">
- <button class="sos" onclick="sos()">SEND SOS</button>
- <div class="hint" style="margin-top:10px">Broadcasts your position to every node in the mesh.</div>
-</div>
-
-<div class="card">
- <div class="k">This node's position <span class="badge" id="posbadge">--</span></div>
- <div class="big" id="pos">--</div>
- <div class="meta" id="posmeta"><span class="tag none">no fix</span></div>
-</div>
-
-<div class="card">
- <div class="k">Mesh <span class="badge" id="peerbadge">0 nodes</span></div>
- <table><thead><tr><th>Node</th><th>Signal</th><th>Seen</th><th>Position</th></tr></thead>
- <tbody id="peers"></tbody></table>
- <button class="sec" style="margin-top:12px" onclick="rescan()" id="rescanbtn">
-   Search / Reconnect Nearby Nodes</button>
- <div class="hint">Use this if a node vanished and hasn't come back. Reinitialises
-  this node's radio and rebroadcasts immediately.</div>
-</div>
-
-<div class="card">
- <div class="k">Share your location</div>
- <button class="pri" onclick="share()">Use Phone GPS</button>
- <div class="hint" id="geohint">Phone browsers only allow GPS over HTTPS. If this is
-  refused, paste coordinates from your maps app below - that always works.</div>
- <input id="la" placeholder="latitude   e.g. 23.797810" inputmode="decimal">
- <input id="lo" placeholder="longitude  e.g. 90.449720" inputmode="decimal">
- <button class="sec" onclick="manual()">Send Coordinates</button>
-</div>
-
-<div class="card">
- <div class="k">Quick rescue report</div>
- <div class="grid2">
-  <button class="sec" onclick="rpt('VICTIM_FOUND')">Victim Found</button>
-  <button class="sec" onclick="rpt('MEDICAL')">Medical Help</button>
-  <button class="sec" onclick="rpt('BLOCKED')">Area Blocked</button>
-  <button class="sec" onclick="rpt('DANGER')">Danger</button>
- </div>
-</div>
-
-<div class="card">
- <div class="k">Team status <span class="badge" id="mystat">--</span></div>
- <div class="grid2">
-  <button class="sec" onclick="st('AVAILABLE')">Available</button>
-  <button class="sec" onclick="st('SEARCHING')">Searching</button>
-  <button class="sec" onclick="st('NEED_ASSIST')">Need Assist</button>
-  <button class="sec" onclick="st('EMERGENCY')">Emergency</button>
- </div>
-</div>
-
-<details>
- <summary>Diagnostics</summary>
- <div class="card">
-  <table><tbody id="diag"></tbody></table>
- </div>
-</details>
-
-</div>
-<div id="toast"></div>
-
-<script>
-var $=function(i){return document.getElementById(i)};
-var toastT;
-function toast(m,cls){
- var t=$('toast'); t.textContent=m; t.className='show '+(cls||'');
- clearTimeout(toastT); toastT=setTimeout(function(){t.className=''},3200);
-}
-function esc(s){return String(s).replace(/[&<>"]/g,function(c){
- return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
-function age(s){s=+s||0; return s<60?s+'s':s<3600?Math.round(s/60)+'m':Math.round(s/3600)+'h'}
-function bars(r){ if(r>=-85)return 4; if(r>=-100)return 3; if(r>=-110)return 2; return 1 }
-
-function post(u,ok){
- fetch(u).then(function(r){return r.text()}).then(function(t){
-   toast(t,ok===false?'err':'good'); tick();
- }).catch(function(){ toast('Failed - still on the node Wi-Fi?','err') });
-}
-function sos(){ if(confirm('Broadcast an SOS to the whole mesh?')) post('/api/sos') }
-function rpt(c){ post('/api/report?code='+c) }
-function st(s){ post('/api/teamstatus?state='+s) }
-function rescan(){
- var b=$('rescanbtn'); b.disabled=true; b.textContent='Reconnecting...';
- fetch('/api/rescan').then(function(r){return r.text()}).then(function(t){
-   toast(t,'good');
- }).catch(function(){ toast('Request failed','err') })
- .then(function(){ setTimeout(function(){
-   b.disabled=false; b.textContent='Search / Reconnect Nearby Nodes'; tick();
- },2500)});
-}
-function sendLoc(a,b,c){ post('/api/loc?lat='+a+'&lon='+b+'&acc='+(c||0)) }
-function share(){
- if(!navigator.geolocation){ toast('No geolocation API in this browser','err'); return }
- toast('Requesting location...');
- navigator.geolocation.getCurrentPosition(
-  function(p){ sendLoc(p.coords.latitude.toFixed(6),p.coords.longitude.toFixed(6),
-                       Math.round(p.coords.accuracy)) },
-  function(e){ toast('Browser refused: '+e.message,'err');
-               $('geohint').style.color='#ffc043' },
-  {enableHighAccuracy:true,timeout:10000,maximumAge:0});
-}
-function manual(){
- var a=parseFloat($('la').value), b=parseFloat($('lo').value);
- if(isNaN(a)||isNaN(b)){ toast('Enter both latitude and longitude','err'); return }
- sendLoc(a.toFixed(6),b.toFixed(6),0);
-}
-
-var srcName={0:'no fix',1:'GPS module',2:'phone'};
-var srcCls ={0:'none',   1:'gps',       2:'phone'};
-
-function render(d){
- $('dot').className='dot on';
- $('sub').textContent='Node '+d.id+'  -  SF'+d.sf+'  -  '+(d.lora?'radio OK':'RADIO FAIL')
-                      +'  -  up '+age(d.up);
-
- // position
- if(d.src){
-   $('pos').textContent=d.lat.toFixed(6)+', '+d.lon.toFixed(6);
-   var stale=d.age>300;
-   $('posmeta').innerHTML='<span class="tag '+srcCls[d.src]+'">'+srcName[d.src]+'</span>'
-     +'<span class="tag'+(stale?' stale':'')+'">'+age(d.age)+' ago</span>'
-     +(d.src==1?'<span class="tag">'+d.sats+' sats</span>':'');
-   $('posbadge').textContent=srcName[d.src];
- } else {
-   $('pos').textContent='no position yet';
-   $('posmeta').innerHTML='<span class="tag none">waiting for GPS or a phone fix</span>';
-   $('posbadge').textContent='--';
- }
-
- // peers
- var up=d.peers.filter(function(p){return p.up}).length;
- $('peerbadge').textContent=up+' of '+d.peers.length+' up';
- $('peers').innerHTML = d.peers.length ? d.peers.map(function(p){
-   var sig = p.up
-     ? '<span class="bars s'+bars(p.rssi)+'"><i></i><i></i><i></i><i></i></span> '+p.rssi
-     : '<span class="lost">lost</span>';
-   var loc = p.hasloc ? p.lat.toFixed(4)+','+p.lon.toFixed(4) : '--';
-   return '<tr><td class="nid">'+esc(p.id)+'</td><td>'+sig+'</td><td>'+age(p.age)
-        +'</td><td>'+loc+'</td></tr>';
- }).join('') : '<tr><td colspan="4" class="empty">searching for nodes...</td></tr>';
-
- // sos banner
- $('alertbox').innerHTML = d.sos
-   ? '<div class="alert"><div class="t">SOS - '+esc(d.sosvictim)+'</div>'
-     +'<div class="d">'+esc(d.sostext||'MAYDAY')+'</div></div>'
-   : '';
-
- $('mystat').textContent=d.mystatus;
-
- // diagnostics
- var routes = d.routes.length
-   ? d.routes.map(function(r){return r.dest+' via '+r.via+' '+r.hops+'h'
-       +(r.valid?'':' (invalid)')}).join('<br>') : 'none';
- var g = d.nmea==0 ? 'SILENT - check wiring'
-        : (d.gpsfix?'FIX, '+d.sats+' sats':'no fix, '+d.sats+' sats');
- $('diag').innerHTML=
-   row('Firmware','v'+d.fw+'  SF'+d.sf)+
-   row('GPS',g+'  ('+d.nmea+' NMEA)')+
-   row('Routes',routes)+
-   row('Radio','tx '+d.tx+'  rx '+d.rx+'  bad '+d.bad+'  wedge '+d.wedge)+
-   row('Wi-Fi clients',d.wifi)+
-   row('Free heap',(d.heap/1024).toFixed(0)+' KB')+
-   row('Team',d.team);
-}
-function row(k,v){return '<tr><td style="color:var(--faint)">'+k+'</td><td>'+v+'</td></tr>'}
-
-function tick(){
- fetch('/api/status').then(function(r){return r.json()}).then(render)
- .catch(function(){ $('dot').className='dot off'; $('sub').textContent='connection lost' });
-}
-setInterval(tick,4000); tick();
-</script></body></html>)HTML";
+const char PORTAL_HTML[] PROGMEM =
+  "<!DOCTYPE html><html lang=\"en\"><head>\n"
+  "<meta charset=\"utf-8\">\n"
+  "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\n"
+  "<meta name=\"theme-color\" content=\"#0b0d10\">\n"
+  "<title>SAR Rescue Portal</title><style>\n"
+  "*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}\n"
+  ":root{\n"
+  " --bg:#0b0d10; --card:#151a21; --card2:#1b222b; --line:#252d38;\n"
+  " --tx:#e8edf3; --dim:#8b96a5; --faint:#5b6675;\n"
+  " --acc:#ff7a1a; --ok:#2ecc71; --warn:#ffc043; --bad:#ff4d4d; --info:#4da3ff;\n"
+  "}\n"
+  "body{margin:0;padding:0 0 28px;font:15px/1.45 system-ui,-apple-system,\"Segoe UI\",sans-serif;\n"
+  " background:var(--bg);color:var(--tx)}\n"
+  ".wrap{max-width:640px;margin:0 auto;padding:0 14px}\n"
+  "\n"
+  "header{position:sticky;top:0;z-index:20;background:rgba(11,13,16,.94);\n"
+  " backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:12px 0 10px}\n"
+  ".htop{display:flex;align-items:center;gap:10px}\n"
+  ".logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,var(--acc),#ff4d4d);\n"
+  " display:grid;place-items:center;font-weight:800;font-size:15px;color:#fff;flex:none}\n"
+  "h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.2px}\n"
+  ".sub{font-size:11.5px;color:var(--dim);margin-top:1px}\n"
+  ".dot{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none;\n"
+  " box-shadow:0 0 0 3px rgba(255,255,255,.04)}\n"
+  ".dot.on{background:var(--ok);animation:pulse 2s infinite}\n"
+  ".dot.off{background:var(--bad)}\n"
+  "@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}\n"
+  "\n"
+  ".alert{margin:12px 0;padding:13px 14px;border-radius:12px;background:#3a0f0f;\n"
+  " border:1px solid #ff4d4d;animation:flash 1.4s infinite}\n"
+  "@keyframes flash{0%,100%{border-color:#ff4d4d}50%{border-color:#7a2020}}\n"
+  ".alert .t{font-weight:750;font-size:14px;letter-spacing:.4px}\n"
+  ".alert .d{font-size:13px;color:#ffc9c9;margin-top:3px;font-family:ui-monospace,monospace}\n"
+  "\n"
+  ".card{background:var(--card);border:1px solid var(--line);border-radius:14px;\n"
+  " padding:14px;margin-top:12px}\n"
+  ".k{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);\n"
+  " font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px}\n"
+  ".k .badge{margin-left:auto;text-transform:none;letter-spacing:0;font-size:11px;\n"
+  " padding:2px 8px;border-radius:20px;background:var(--card2);color:var(--dim)}\n"
+  "\n"
+  ".big{font-size:21px;font-family:ui-monospace,Menlo,monospace;font-weight:600;\n"
+  " letter-spacing:-.3px;word-break:break-all}\n"
+  ".meta{font-size:12px;color:var(--dim);margin-top:4px;display:flex;\n"
+  " align-items:center;gap:7px;flex-wrap:wrap}\n"
+  ".tag{font-size:10.5px;padding:2px 8px;border-radius:20px;font-weight:600;\n"
+  " background:var(--card2);color:var(--dim)}\n"
+  ".tag.gps{background:rgba(46,204,113,.16);color:var(--ok)}\n"
+  ".tag.phone{background:rgba(77,163,255,.16);color:var(--info)}\n"
+  ".tag.none{background:rgba(255,77,77,.16);color:var(--bad)}\n"
+  ".tag.stale{background:rgba(255,192,67,.16);color:var(--warn)}\n"
+  "\n"
+  "button{font:inherit;border:0;border-radius:11px;padding:13px;font-weight:650;\n"
+  " cursor:pointer;transition:transform .08s,filter .15s;width:100%}\n"
+  "button:active{transform:scale(.975)}\n"
+  "button:disabled{opacity:.5}\n"
+  ".sos{background:linear-gradient(135deg,#ff3b3b,#c81e1e);color:#fff;font-size:18px;\n"
+  " padding:20px;letter-spacing:.5px;box-shadow:0 6px 18px rgba(255,59,59,.25)}\n"
+  ".pri{background:var(--acc);color:#fff}\n"
+  ".sec{background:var(--card2);color:var(--tx);border:1px solid var(--line)}\n"
+  ".grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}\n"
+  ".grid2 button{padding:12px 8px;font-size:13.5px}\n"
+  "\n"
+  "input{width:100%;padding:12px;margin:5px 0;border-radius:10px;font-size:15px;\n"
+  " border:1px solid var(--line);background:#080a0d;color:var(--tx)}\n"
+  "input:focus{outline:0;border-color:var(--acc)}\n"
+  ".hint{font-size:11.5px;color:var(--faint);margin-top:8px;line-height:1.5}\n"
+  "\n"
+  "table{width:100%;border-collapse:collapse;font-size:13px}\n"
+  "th{text-align:left;font-size:10px;letter-spacing:.07em;text-transform:uppercase;\n"
+  " color:var(--faint);font-weight:600;padding:0 0 6px}\n"
+  "td{padding:7px 0;border-top:1px solid var(--line);font-family:ui-monospace,monospace}\n"
+  "tr:first-child td{border-top:0}\n"
+  ".nid{font-weight:700;font-family:system-ui,sans-serif}\n"
+  ".bars{display:inline-flex;gap:2px;vertical-align:middle}\n"
+  ".bars i{width:3px;border-radius:1px;background:var(--line);display:block}\n"
+  ".bars i:nth-child(1){height:5px}.bars i:nth-child(2){height:8px}\n"
+  ".bars i:nth-child(3){height:11px}.bars i:nth-child(4){height:14px}\n"
+  ".bars.s1 i:nth-child(-n+1),.bars.s2 i:nth-child(-n+2),\n"
+  ".bars.s3 i:nth-child(-n+3),.bars.s4 i:nth-child(-n+4){background:var(--ok)}\n"
+  ".bars.s1 i:nth-child(-n+1){background:var(--bad)}\n"
+  ".bars.s2 i:nth-child(-n+2){background:var(--warn)}\n"
+  ".lost{color:var(--bad);font-size:11.5px}\n"
+  ".empty{color:var(--faint);font-size:13px;padding:8px 0;text-align:center}\n"
+  "\n"
+  "#toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,80px);\n"
+  " background:var(--card2);border:1px solid var(--line);color:var(--tx);\n"
+  " padding:11px 18px;border-radius:11px;font-size:13.5px;z-index:60;\n"
+  " transition:transform .28s cubic-bezier(.2,.9,.3,1.3);max-width:90vw;\n"
+  " box-shadow:0 8px 24px rgba(0,0,0,.5)}\n"
+  "#toast.show{transform:translate(-50%,0)}\n"
+  "#toast.good{border-color:var(--ok)} #toast.err{border-color:var(--bad)}\n"
+  "\n"
+  "details{margin-top:12px}\n"
+  "summary{cursor:pointer;list-style:none;padding:13px 14px;background:var(--card);\n"
+  " border:1px solid var(--line);border-radius:14px;font-size:13px;color:var(--dim);\n"
+  " font-weight:600;display:flex;align-items:center}\n"
+  "summary::-webkit-details-marker{display:none}\n"
+  "summary:after{content:\"+\";margin-left:auto;font-size:17px;color:var(--faint)}\n"
+  "details[open] summary{border-radius:14px 14px 0 0;color:var(--tx)}\n"
+  "details[open] summary:after{content:\"-\"}\n"
+  "details .card{margin-top:0;border-radius:0 0 14px 14px;border-top:0}\n"
+  "</style></head><body>\n"
+  "<div class=\"wrap\">\n"
+  "\n"
+  "<header>\n"
+  " <div class=\"htop\">\n"
+  "  <div class=\"logo\">SAR</div>\n"
+  "  <div style=\"min-width:0\">\n"
+  "   <h1>Rescue Portal</h1>\n"
+  "   <div class=\"sub\" id=\"sub\">connecting...</div>\n"
+  "  </div>\n"
+  "  <div class=\"dot\" id=\"dot\"></div>\n"
+  " </div>\n"
+  "</header>\n"
+  "\n"
+  "<div id=\"alertbox\"></div>\n"
+  "\n"
+  "<div class=\"card\" style=\"text-align:center\">\n"
+  " <button class=\"sos\" onclick=\"sos()\">SEND SOS</button>\n"
+  " <div class=\"hint\" style=\"margin-top:10px\">Broadcasts your position to every node in the mesh.</div>\n"
+  "</div>\n"
+  "\n"
+  "<div class=\"card\">\n"
+  " <div class=\"k\">This node's position <span class=\"badge\" id=\"posbadge\">--</span></div>\n"
+  " <div class=\"big\" id=\"pos\">--</div>\n"
+  " <div class=\"meta\" id=\"posmeta\"><span class=\"tag none\">no fix</span></div>\n"
+  "</div>\n"
+  "\n"
+  "<div class=\"card\">\n"
+  " <div class=\"k\">Mesh <span class=\"badge\" id=\"peerbadge\">0 nodes</span></div>\n"
+  " <table><thead><tr><th>Node</th><th>Signal</th><th>Seen</th><th>Position</th></tr></thead>\n"
+  " <tbody id=\"peers\"></tbody></table>\n"
+  " <button class=\"sec\" style=\"margin-top:12px\" onclick=\"rescan()\" id=\"rescanbtn\">\n"
+  "   Search / Reconnect Nearby Nodes</button>\n"
+  " <div class=\"hint\">Use this if a node vanished and hasn't come back. Reinitialises\n"
+  "  this node's radio and rebroadcasts immediately.</div>\n"
+  "</div>\n"
+  "\n"
+  "<div class=\"card\">\n"
+  " <div class=\"k\">Share your location</div>\n"
+  " <button class=\"pri\" onclick=\"share()\">Use Phone GPS</button>\n"
+  " <div class=\"hint\" id=\"geohint\">Phone browsers only allow GPS over HTTPS. If this is\n"
+  "  refused, paste coordinates from your maps app below - that always works.</div>\n"
+  " <input id=\"la\" placeholder=\"latitude   e.g. 23.797810\" inputmode=\"decimal\">\n"
+  " <input id=\"lo\" placeholder=\"longitude  e.g. 90.449720\" inputmode=\"decimal\">\n"
+  " <button class=\"sec\" onclick=\"manual()\">Send Coordinates</button>\n"
+  "</div>\n"
+  "\n"
+  "<div class=\"card\">\n"
+  " <div class=\"k\">Quick rescue report</div>\n"
+  " <div class=\"grid2\">\n"
+  "  <button class=\"sec\" onclick=\"rpt('VICTIM_FOUND')\">Victim Found</button>\n"
+  "  <button class=\"sec\" onclick=\"rpt('MEDICAL')\">Medical Help</button>\n"
+  "  <button class=\"sec\" onclick=\"rpt('BLOCKED')\">Area Blocked</button>\n"
+  "  <button class=\"sec\" onclick=\"rpt('DANGER')\">Danger</button>\n"
+  " </div>\n"
+  "</div>\n"
+  "\n"
+  "<div class=\"card\">\n"
+  " <div class=\"k\">Team status <span class=\"badge\" id=\"mystat\">--</span></div>\n"
+  " <div class=\"grid2\">\n"
+  "  <button class=\"sec\" onclick=\"st('AVAILABLE')\">Available</button>\n"
+  "  <button class=\"sec\" onclick=\"st('SEARCHING')\">Searching</button>\n"
+  "  <button class=\"sec\" onclick=\"st('NEED_ASSIST')\">Need Assist</button>\n"
+  "  <button class=\"sec\" onclick=\"st('EMERGENCY')\">Emergency</button>\n"
+  " </div>\n"
+  "</div>\n"
+  "\n"
+  "<details>\n"
+  " <summary>Diagnostics</summary>\n"
+  " <div class=\"card\">\n"
+  "  <table><tbody id=\"diag\"></tbody></table>\n"
+  " </div>\n"
+  "</details>\n"
+  "\n"
+  "</div>\n"
+  "<div id=\"toast\"></div>\n"
+  "\n"
+  "<script>\n"
+  "var $=function(i){return document.getElementById(i)};\n"
+  "var toastT;\n"
+  "function toast(m,cls){\n"
+  " var t=$('toast'); t.textContent=m; t.className='show '+(cls||'');\n"
+  " clearTimeout(toastT); toastT=setTimeout(function(){t.className=''},3200);\n"
+  "}\n"
+  "function esc(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]})}\n"
+  "function age(s){s=+s||0; return s<60?s+'s':s<3600?Math.round(s/60)+'m':Math.round(s/3600)+'h'}\n"
+  "function bars(r){ if(r>=-85)return 4; if(r>=-100)return 3; if(r>=-110)return 2; return 1 }\n"
+  "\n"
+  "function post(u,ok){\n"
+  " fetch(u).then(function(r){return r.text()}).then(function(t){\n"
+  "   toast(t,ok===false?'err':'good'); tick();\n"
+  " }).catch(function(){ toast('Failed - still on the node Wi-Fi?','err') });\n"
+  "}\n"
+  "function sos(){ if(confirm('Broadcast an SOS to the whole mesh?')) post('/api/sos') }\n"
+  "function rpt(c){ post('/api/report?code='+c) }\n"
+  "function st(s){ post('/api/teamstatus?state='+s) }\n"
+  "function rescan(){\n"
+  " var b=$('rescanbtn'); b.disabled=true; b.textContent='Reconnecting...';\n"
+  " fetch('/api/rescan').then(function(r){return r.text()}).then(function(t){\n"
+  "   toast(t,'good');\n"
+  " }).catch(function(){ toast('Request failed','err') })\n"
+  " .then(function(){ setTimeout(function(){\n"
+  "   b.disabled=false; b.textContent='Search / Reconnect Nearby Nodes'; tick();\n"
+  " },2500)});\n"
+  "}\n"
+  "function sendLoc(a,b,c){ post('/api/loc?lat='+a+'&lon='+b+'&acc='+(c||0)) }\n"
+  "function share(){\n"
+  " if(!navigator.geolocation){ toast('No geolocation API in this browser','err'); return }\n"
+  " toast('Requesting location...');\n"
+  " navigator.geolocation.getCurrentPosition(\n"
+  "  function(p){ sendLoc(p.coords.latitude.toFixed(6),p.coords.longitude.toFixed(6),\n"
+  "                       Math.round(p.coords.accuracy)) },\n"
+  "  function(e){ toast('Browser refused: '+e.message,'err');\n"
+  "               $('geohint').style.color='#ffc043' },\n"
+  "  {enableHighAccuracy:true,timeout:10000,maximumAge:0});\n"
+  "}\n"
+  "function manual(){\n"
+  " var a=parseFloat($('la').value), b=parseFloat($('lo').value);\n"
+  " if(isNaN(a)||isNaN(b)){ toast('Enter both latitude and longitude','err'); return }\n"
+  " sendLoc(a.toFixed(6),b.toFixed(6),0);\n"
+  "}\n"
+  "\n"
+  "var srcName={0:'no fix',1:'GPS module',2:'phone'};\n"
+  "var srcCls ={0:'none',   1:'gps',       2:'phone'};\n"
+  "\n"
+  "function render(d){\n"
+  " $('dot').className='dot on';\n"
+  " $('sub').textContent='Node '+d.id+'  -  SF'+d.sf+'  -  '+(d.lora?'radio OK':'RADIO FAIL')\n"
+  "                      +'  -  up '+age(d.up);\n"
+  "\n"
+  " // position\n"
+  " if(d.src){\n"
+  "   $('pos').textContent=d.lat.toFixed(6)+', '+d.lon.toFixed(6);\n"
+  "   var stale=d.age>300;\n"
+  "   $('posmeta').innerHTML='<span class=\"tag '+srcCls[d.src]+'\">'+srcName[d.src]+'</span>'\n"
+  "     +'<span class=\"tag'+(stale?' stale':'')+'\">'+age(d.age)+' ago</span>'\n"
+  "     +(d.src==1?'<span class=\"tag\">'+d.sats+' sats</span>':'');\n"
+  "   $('posbadge').textContent=srcName[d.src];\n"
+  " } else {\n"
+  "   $('pos').textContent='no position yet';\n"
+  "   $('posmeta').innerHTML='<span class=\"tag none\">waiting for GPS or a phone fix</span>';\n"
+  "   $('posbadge').textContent='--';\n"
+  " }\n"
+  "\n"
+  " // peers\n"
+  " var up=d.peers.filter(function(p){return p.up}).length;\n"
+  " $('peerbadge').textContent=up+' of '+d.peers.length+' up';\n"
+  " $('peers').innerHTML = d.peers.length ? d.peers.map(function(p){\n"
+  "   var sig = p.up\n"
+  "     ? '<span class=\"bars s'+bars(p.rssi)+'\"><i></i><i></i><i></i><i></i></span> '+p.rssi\n"
+  "     : '<span class=\"lost\">lost</span>';\n"
+  "   var loc = p.hasloc ? p.lat.toFixed(4)+','+p.lon.toFixed(4) : '--';\n"
+  "   return '<tr><td class=\"nid\">'+esc(p.id)+'</td><td>'+sig+'</td><td>'+age(p.age)\n"
+  "        +'</td><td>'+loc+'</td></tr>';\n"
+  " }).join('') : '<tr><td colspan=\"4\" class=\"empty\">searching for nodes...</td></tr>';\n"
+  "\n"
+  " // sos banner\n"
+  " $('alertbox').innerHTML = d.sos\n"
+  "   ? '<div class=\"alert\"><div class=\"t\">SOS - '+esc(d.sosvictim)+'</div>'\n"
+  "     +'<div class=\"d\">'+esc(d.sostext||'MAYDAY')+'</div></div>'\n"
+  "   : '';\n"
+  "\n"
+  " $('mystat').textContent=d.mystatus;\n"
+  "\n"
+  " // diagnostics\n"
+  " var routes = d.routes.length\n"
+  "   ? d.routes.map(function(r){return r.dest+' via '+r.via+' '+r.hops+'h'\n"
+  "       +(r.valid?'':' (invalid)')}).join('<br>') : 'none';\n"
+  " var g = d.nmea==0 ? 'SILENT - check wiring'\n"
+  "        : (d.gpsfix?'FIX, '+d.sats+' sats':'no fix, '+d.sats+' sats');\n"
+  " $('diag').innerHTML=\n"
+  "   row('Firmware','v'+d.fw+'  SF'+d.sf)+\n"
+  "   row('GPS',g+'  ('+d.nmea+' NMEA)')+\n"
+  "   row('Routes',routes)+\n"
+  "   row('Radio','tx '+d.tx+'  rx '+d.rx+'  bad '+d.bad+'  wedge '+d.wedge)+\n"
+  "   row('Wi-Fi clients',d.wifi)+\n"
+  "   row('Free heap',(d.heap/1024).toFixed(0)+' KB')+\n"
+  "   row('Team',d.team);\n"
+  "}\n"
+  "function row(k,v){return '<tr><td style=\"color:var(--faint)\">'+k+'</td><td>'+v+'</td></tr>'}\n"
+  "\n"
+  "function tick(){\n"
+  " fetch('/api/status').then(function(r){return r.json()}).then(render)\n"
+  " .catch(function(){ $('dot').className='dot off'; $('sub').textContent='connection lost' });\n"
+  "}\n"
+  "setInterval(tick,4000); tick();\n"
+  "</script></body></html>\n";
 
 void handlePortal() {
   server.send_P(200, "text/html", PORTAL_HTML);
