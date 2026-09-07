@@ -111,10 +111,10 @@ rssi/snr/age/position) instead of pre-formatted HTML, so the page renders it pro
 | Situation | Set `LORA_SF` |
 |---|---|
 | Indoors, short range, want speed | 7 |
-| **Mixed indoor + outdoor (default)** | **8** |
+| **Mixed indoor + outdoor (default)** | **7 - the known-good value; raise one step at a time** |
 | Maximum range, slow | 10 or 11 |
 
-**Change it in all three sketches AND in `pi/sx1278.py` (`SF = 8`).** Nodes on different spreading
+**Change it in all three sketches AND in `pi/sx1278.py` (`SF = 7`).** Nodes on different spreading
 factors cannot hear each other at all — this is the single most common way to end up with a silent
 mesh.
 
@@ -336,3 +336,75 @@ If you see `BROWNOUT`, it is power, not radio — a better USB cable, a better p
 capacitor across the LoRa module's 3V3/GND, or a separate supply for the module. If you see
 `POWERON` or `SW_RESET` instead, the node was not resetting and the problem was the congestion
 above.
+
+---
+
+## Correction — the spreading factor is back to SF7
+
+After the SF8 build, **nothing connected to anything** — no node to node, no node to Pi. That is a
+different failure from the congestion above. Congestion degrades a mesh: links come and go, some
+pairs work, it limps. A **clean, total failure across every pair at once** is the signature of a
+**PHY mismatch** — and the PHY is what I changed.
+
+Two spreading-factor changes were made in Phase 7 (7 → 9, then 9 → 8) and the mesh got worse both
+times. So `LORA_SF` is back to **7** — the value phases 3–6 ran, which linked up reliably on this
+hardware — and `pi/sx1278.py` is `SF = 7` to match. The congestion fixes (bounded reconnect burst,
+duty governor) are **kept**: those only change how *often* beacons are sent, never the PHY, and the
+unbounded reconnect storm was a genuine bug regardless of SF.
+
+`CPU_MHZ` is also back to the stock **240**. Dropping it to 80 is a real heat fix, but it went in at
+the same time as the SF change and it should not be confounded with the radio problem. Turn it back
+down once the mesh is confirmed linking. The Wi-Fi TX power reduction is kept — it is a different
+radio and cannot affect LoRa.
+
+> **Why a spreading-factor mismatch is invisible.** There is no error, anywhere. A radio listening
+> on the wrong SF hears *nothing* — and that looks exactly like a radio with nobody in range. If
+> even one of the four devices is running an older build, the whole mesh looks dead.
+
+### New: the PHY box
+
+Every node now prints this at boot, and `main.py` prints the matching one on the Pi:
+
+```
+############################################################
+#  RADIO PHY - MUST BE IDENTICAL ON ALL 3 NODES AND THE PI
+#     freq 433000000 Hz    SF7    BW 125000 Hz    CR 4/5
+#     sync 0x2A    preamble 8    CRC on    TX 17 dBm
+#     CPU 240 MHz
+############################################################
+```
+
+**Compare all four boxes. Any difference in freq / SF / BW / CR / sync is the whole problem.** The
+Pi reads its numbers straight out of `sx1278.py`, so that box can never drift from what the driver
+actually programs.
+
+### New: `T` — radio test mode
+
+Press **`T`** on a node's serial monitor. It sends a plain `PING A 42` every 3 s — deliberately not
+a protocol frame.
+
+### New: `[rx-raw]` logging
+
+A frame that arrives with a **valid hardware CRC** but does not parse is now printed instead of
+being silently counted:
+
+```
+[rx-raw] unparsed  rssi=-47 snr=9.5 len=12  "PING A 42"
+```
+
+Together these separate the two failures that otherwise look identical:
+
+| On the other node you see | Meaning |
+|---|---|
+| `[rx-raw] ... "PING A 42"` | **The radios hear each other.** The PHY is fine and the fault is in the mesh/protocol layer |
+| **nothing at all** | The PHY does not match, or a radio is dead, or an antenna is missing |
+
+That second row is the one to check first, and it takes about a minute.
+
+### Raising the range later
+
+Once the mesh is provably stable at SF7, `LORA_SF` can go up **one step at a time**, changed in
+**all three sketches and `pi/sx1278.py` together**, re-flashing everything and confirming the PHY
+boxes match before testing range. Airtime is computed from it and the duty governor adapts, so SF8
+is safe from a congestion point of view — the discipline that was missing was changing one thing at
+a time and verifying it.

@@ -81,7 +81,25 @@ def main():
         sys.exit(1)
 
     print(f"SAR Command Centre up.  dashboard: http://<pi-ip>:{args.port}/")
-    print(f"node id: PI   radio: {'FAKE' if args.fake_radio else 'SX1278 @ 433MHz SF7'}")
+
+    # PHY box, printed the same way the ESP32 nodes print theirs at boot.
+    # These numbers MUST match the box on every node. A single mismatched
+    # spreading factor makes the Pi completely deaf to the mesh, and nothing
+    # reports an error - a radio that hears nothing looks exactly like a radio
+    # with nobody in range. The values are read from sx1278.py rather than
+    # written out here, so this can never drift from what the driver does.
+    if args.fake_radio:
+        print("node id: PI   radio: FAKE (no hardware)")
+    else:
+        import sx1278 as _phy
+        print("############################################################")
+        print("#  RADIO PHY - MUST BE IDENTICAL ON ALL 3 NODES AND THE PI")
+        print(f"#     freq {_phy.FREQ_HZ} Hz    SF{_phy.SF}    "
+              f"BW {_phy.BW_HZ} Hz    CR 4/{_phy.CR_DENOM}")
+        print(f"#     sync 0x{_phy.SYNC_WORD:02X}    preamble {_phy.PREAMBLE}    "
+              f"CRC on    TX {_phy.TX_POWER_DBM} dBm")
+        print("#  Nodes must match: LORA_* in development/phase 7/Node *.md")
+        print("############################################################")
 
     # SIGTERM (systemctl stop / kill, no -9) doesn't raise KeyboardInterrupt
     # in the main thread by default - without this handler the process just

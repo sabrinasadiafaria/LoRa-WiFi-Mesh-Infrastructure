@@ -102,15 +102,19 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 // NOTE: the stock LoRa library leaves CRC OFF and uses the public sync word
 // 0x12, so any other SX127x nearby collides with us. Both are fixed here.
 #define LORA_FREQ      433E6
-#define LORA_SF        8        // RANGE vs AIRTIME. SF7 (-123dBm) was tuned on a
-                                // desk at 2m. SF9 (-129dBm) doubled the range but
-                                // TRIPLED the time on air, and with 3 nodes + Pi
-                                // that congested the channel until the mesh could
-                                // not re-form (see the Phase 7 README).
-                                // SF8 (-126dBm) keeps +3dB / ~1.4x over SF7 at HALF
-                                // the airtime of SF9. Change it freely - airtime is
-                                // computed from it (loraAirtimeMs) and the duty
-                                // governor below adapts automatically.
+#define LORA_SF        7        // BACK TO THE KNOWN-GOOD VALUE.
+                                // SF7 is what phases 3-6 ran, and those linked up
+                                // reliably. Phase 7 raised it to 9 for range and
+                                // then 8; both times the mesh got WORSE, so the
+                                // spreading factor goes back to the setting with
+                                // hardware evidence behind it and stays there until
+                                // the mesh is provably stable again.
+                                // Raise it ONLY one step at a time, and ONLY after
+                                // changing it in all three sketches AND in
+                                // pi/sx1278.py - see the RADIO PHY box printed at
+                                // boot. Nodes on different spreading factors are
+                                // COMPLETELY deaf to each other, which looks
+                                // exactly like "nothing connects to anything".
 #define LORA_BW        125000L
 #define LORA_CR        5
 #define LORA_TXPOWER   17
@@ -127,7 +131,10 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 //   - the phone is a metre away; 11 dBm of Wi-Fi is plenty, and the AP is a
 //     bigger share of the average current than the LoRa radio ever is.
 // LORA_TXPOWER is deliberately NOT reduced - that is the range budget.
-#define CPU_MHZ         80             // was 240
+#define CPU_MHZ        240             // STOCK. Dropping this to 80 is a real heat
+                                       // fix, but change ONE thing at a time: get
+                                       // the mesh linking at 240 first, then try 80
+                                       // and confirm the links survive.
 #define WIFI_TX_DBM     WIFI_POWER_11dBm
 
 // ------------------------------ Wi-Fi portal ------------------------------
@@ -702,6 +709,14 @@ uint32_t loopStartMs = 0;
 // press v to toggle when you actually need the trace.
 bool     verboseRx = false;
 
+// RADIO TEST MODE (serial 'T'). Sends a plain non-protocol PING every 3 s.
+// The receiver cannot parse it, so it lands in the [rx-raw] log above with its
+// RSSI. That is the decisive test: if the other node prints [rx-raw] PING the
+// radios hear each other and the fault is in the mesh logic; if it prints
+// nothing at all, the PHY does not match or a radio/antenna is dead.
+bool     radioTest = false;
+uint32_t testLast  = 0;
+
 // ===========================================================================
 //  SOS / RESCUE-REPORT / TEAM-STATUS STATE  (Phase 4)
 //
@@ -967,7 +982,16 @@ bool radioPoll(Packet &out) {
   int   rssi = LoRa.packetRssi();
   float snr  = LoRa.packetSnr();
 
-  if (!pktParse(buf, out)) { statBad++; return false; }
+  if (!pktParse(buf, out)) {
+    // A frame got here with a VALID hardware CRC, so the PHY matches and the
+    // RF link is fine - only the format did not. Printing it separates "the
+    // radios cannot hear each other" from "they can hear each other but
+    // disagree about the protocol", which is otherwise invisible.
+    statBad++;
+    Serial.printf("[rx-raw] unparsed  rssi=%d snr=%.1f len=%d  \"%.60s\"\n",
+                  rssi, (double)snr, n, buf);
+    return false;
+  }
   out.rssi = rssi;
   out.snr  = snr;
   statRx++;
@@ -2645,6 +2669,13 @@ void handleSerial() {
   } else if (c == 'R') {
     manualRescan("serial");
 
+  } else if (c == 'T') {
+    radioTest = !radioTest;
+    Serial.printf("[test] radio test mode %s - plain PING every 3 s.\n",
+                  radioTest ? "ON" : "off");
+    Serial.println("[test] watch the OTHER nodes for a [rx-raw] PING line.");
+    Serial.println("[test] nothing there = PHY mismatch, dead radio, or no antenna.");
+
   } else if (c == 'v') {
     verboseRx = !verboseRx;
     Serial.printf("[ui] per-packet rx logging %s\n", verboseRx ? "ON" : "off");
@@ -2727,6 +2758,21 @@ void setup() {
   Serial.println("\n############################################################");
   Serial.printf ("#  WHY DID THIS NODE LAST RESTART?\n");
   Serial.printf ("#     %s\n", resetReasonName());
+  Serial.println("############################################################\n");
+
+  // Every node AND the Pi must show IDENTICAL numbers in this box. One
+  // mismatched spreading factor makes them completely deaf to each other,
+  // which looks exactly like "nothing connects to anything" - and there is no
+  // error anywhere to tell you, because a radio that hears nothing looks the
+  // same as a radio with nobody in range.
+  Serial.println("############################################################");
+  Serial.println("#  RADIO PHY - MUST BE IDENTICAL ON ALL 3 NODES AND THE PI");
+  Serial.printf ("#     freq %ld Hz    SF%d    BW %ld Hz    CR 4/%d\n",
+                 (long)LORA_FREQ, (int)LORA_SF, (long)LORA_BW, (int)LORA_CR);
+  Serial.printf ("#     sync 0x%02X    preamble %d    CRC on    TX %d dBm\n",
+                 (int)LORA_SYNCWORD, (int)LORA_PREAMBLE, (int)LORA_TXPOWER);
+  Serial.printf ("#     CPU %u MHz\n", (unsigned)getCpuFrequencyMhz());
+  Serial.println("#  Pi must match: SF/BW/CR/sync in development/pi/sx1278.py");
   Serial.println("############################################################\n");
 
   // STEP 2: GPS serial
@@ -2819,6 +2865,14 @@ void loop() {
                   deadDest, (unsigned long)(ROUTE_TIMEOUT_MS / 1000UL));
 
   // 5. periodic broadcasts
+  if (radioTest && millis() - testLast > 3000UL) {
+    testLast = millis();
+    char t[48];
+    snprintf(t, sizeof(t), "PING %s %lu", MY_ID, (unsigned long)(millis() / 1000UL));
+    radioEnqueue(t);
+    Serial.printf("[test] sent \"%s\"\n", t);
+  }
+
   if (hbTimer.due())  sendHeartbeat();
   if (gpsTimer.due()) sendLocation();
   if (rtTimer.due())  sendRoutes();
