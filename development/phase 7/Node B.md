@@ -102,15 +102,33 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 // NOTE: the stock LoRa library leaves CRC OFF and uses the public sync word
 // 0x12, so any other SX127x nearby collides with us. Both are fixed here.
 #define LORA_FREQ      433E6
-#define LORA_SF        9        // RANGE. SF7 (-123dBm) was tuned on a desk at 2m;
-                                // SF9 (-129dBm) is +6dB = ~2x range outdoors.
-                                // Change this freely - airtime is now computed
-                                // from it, not hardcoded (see loraAirtimeMs).
+#define LORA_SF        8        // RANGE vs AIRTIME. SF7 (-123dBm) was tuned on a
+                                // desk at 2m. SF9 (-129dBm) doubled the range but
+                                // TRIPLED the time on air, and with 3 nodes + Pi
+                                // that congested the channel until the mesh could
+                                // not re-form (see the Phase 7 README).
+                                // SF8 (-126dBm) keeps +3dB / ~1.4x over SF7 at HALF
+                                // the airtime of SF9. Change it freely - airtime is
+                                // computed from it (loraAirtimeMs) and the duty
+                                // governor below adapts automatically.
 #define LORA_BW        125000L
 #define LORA_CR        5
 #define LORA_TXPOWER   17
 #define LORA_SYNCWORD  0x2A
 #define LORA_PREAMBLE  8
+
+// ---------------------------- power / heat --------------------------------
+// An ESP32 running a SoftAP continuously at 240 MHz, with a LoRa module, an
+// OLED and a GPS hanging off its 3V3 pin, is a small heater - and a hot board
+// browns out mid-transmit, which looks exactly like "the nodes keep losing
+// each other". Both knobs below cut current with no effect on LoRa range:
+//   - 80 MHz is the lowest clock the Wi-Fi stack supports and is still far
+//     more CPU than this sketch needs (maxloop stays single-digit ms).
+//   - the phone is a metre away; 11 dBm of Wi-Fi is plenty, and the AP is a
+//     bigger share of the average current than the LoRa radio ever is.
+// LORA_TXPOWER is deliberately NOT reduced - that is the range budget.
+#define CPU_MHZ         80             // was 240
+#define WIFI_TX_DBM     WIFI_POWER_11dBm
 
 // ------------------------------ Wi-Fi portal ------------------------------
 #define ENABLE_PORTAL   1              // set 0 to make this a LoRa-only relay
@@ -142,7 +160,26 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define AUTO_DATA_MS         15000UL   // repeat-send period when t is toggled on
 #define OLED_REFRESH_MS       1000UL   // redraw is skipped when nothing changed
 #define UI_PAGE_MS            4000UL   // how long each OLED page is shown
-#define RECONNECT_HB_MS       6000UL   // faster beacon while a neighbour is missing
+// FAST RECONNECT, NOW BOUNDED.  When a known neighbour goes missing we beacon
+// faster so we find each other again. Until now that was UNBOUNDED: once a
+// node had ever lost a peer it beaconed every 6 s forever. At SF7 that was
+// ~2 % of the channel and harmless; at SF9 it is ~5.5 % PER NODE for
+// heartbeats alone, and it is self-reinforcing - lose a peer, beacon faster,
+// collide more, lose more peers, beacon faster still. Three nodes plus the Pi
+// saturate the channel and the mesh can never re-form. That is the bug behind
+// "both nodes are lost and cannot reach the Pi". The burst is now limited to
+// RECONNECT_WINDOW_MS, after which we fall back to the normal rate - a
+// returning node announces itself with bootBeacons anyway.
+#define RECONNECT_HB_MS       6000UL   // fast beacon while a neighbour is missing
+#define RECONNECT_WINDOW_MS  90000UL   // ...but only for this long after the loss
+
+// DUTY-CYCLE GOVERNOR. A hard ceiling on how much of each minute this node may
+// spend transmitting ROUTINE beacons. Steady state at SF8 is ~2 %, so it never
+// bites in normal operation - it exists so that no future timing change (or a
+// lost-peer storm like the one above) can congest the channel again. SOS,
+// DATA, ACK and CMD traffic is NEVER governed.
+#define DUTY_WINDOW_MS       60000UL
+#define DUTY_BUDGET_PERMIL      100    // 10 % of the window
 #define I2C_HZ              100000L   // standard rate - see the I2C section below
 #define I2C_TIMEOUT_MS           50   // MUST be set or a glitching OLED can hang loop() forever
 #define STAT_LOG_MS          30000UL
@@ -639,6 +676,10 @@ uint8_t  uiPage = 0;
 // rediscover it in seconds instead of waiting a whole HB_INTERVAL_MS.
 uint8_t  bootBeacons = 4;
 
+// When the first still-missing neighbour went missing (0 = everyone is here).
+// Bounds the fast-reconnect beacon burst - see RECONNECT_WINDOW_MS.
+uint32_t missingSinceMs = 0;
+
 // RADIO HEALTH WATCHDOG.
 // radioOk is set true once at boot and NEVER set false again at runtime, so
 // if the SX1278 wedges internally - a state only a real hardware reset
@@ -779,6 +820,34 @@ uint32_t loraAirtimeMs(uint16_t len) {
   return (uint32_t)(tPre + (double)nPay * tSym + 0.5);
 }
 
+// ---------------------------------------------------------------------------
+// DUTY-CYCLE GOVERNOR
+// A rolling window of how many ms of airtime we have actually used.
+// radioService() adds each completed transmission; the routine beacon senders
+// ask permission before queueing. Returns false when this frame would push us
+// over budget. Placed here because it needs loraAirtimeMs() above.
+uint32_t dutyUsedMs   = 0;
+uint32_t dutyWinStart = 0;
+uint32_t statDuty     = 0;          // beacons skipped because the channel was busy
+
+bool dutyAllows(uint16_t len) {
+  uint32_t now = millis();
+  if (now - dutyWinStart >= DUTY_WINDOW_MS) { dutyWinStart = now; dutyUsedMs = 0; }
+  const uint32_t budgetMs = (DUTY_WINDOW_MS / 1000UL) * (uint32_t)DUTY_BUDGET_PERMIL;
+  if (dutyUsedMs + loraAirtimeMs(len) <= budgetMs) return true;
+
+  statDuty++;
+  static uint32_t lastMoan = 0;     // one line per 30 s, not one per skip
+  if (now - lastMoan > 30000UL) {
+    lastMoan = now;
+    Serial.printf("[duty] channel busy - %lu of %lu ms used this minute, "
+                  "%lu beacons skipped so far\n",
+                  (unsigned long)dutyUsedMs, (unsigned long)budgetMs,
+                  (unsigned long)statDuty);
+  }
+  return false;
+}
+
 // Called every loop. If our own heartbeat has not gone out in RADIO_WEDGE_MS,
 // force the exact reinit sequence radioBegin() does at boot - the same thing
 // a power cycle achieves, without the power cycle.
@@ -852,6 +921,7 @@ void radioService() {
     txInFlight = false;                 // parsePacket() re-arms RX next loop
     statTx++;
     lastTxOkMs = millis();              // proof the local radio still works
+    dutyUsedMs += txAirtimeMs;          // charge it to this minute budget
     txLast = millis();
     txGap  = TX_MIN_GAP_MS + (uint32_t)random(0, TX_GAP_JITTER_MS);
     return;
@@ -1584,6 +1654,10 @@ void portalBegin() {
   portalOk = WiFi.softAP(AP_SSID, AP_PASSWORD, AP_CHANNEL, 0, AP_MAX_CLIENTS);
   if (!portalOk) { Serial.println("[portal] softAP FAILED"); return; }
 
+  // The phone is a metre away. Full Wi-Fi TX power buys nothing here and is a
+  // big share of the average current - and therefore of the heat.
+  WiFi.setTxPower(WIFI_TX_DBM);
+
   // Answer every DNS query with our own IP - that is what makes the phone
   // believe it has hit a captive portal and pop the browser open.
   dns.start(53, "*", apIP);
@@ -1710,9 +1784,17 @@ void sendHeartbeat() {
     bootBeacons--;                       // fast rediscovery right after a boot
     hbTimer.setPeriod(3000UL);
   } else if (anyNeighborMissing()) {
-    // someone we know is missing - beacon faster so we find each other again
-    hbTimer.setPeriod(RECONNECT_HB_MS + (uint32_t)random(0, 800));
+    // Someone we know is missing - beacon faster so we find each other again,
+    // but ONLY for RECONNECT_WINDOW_MS and only while the channel has room.
+    // Unbounded fast beaconing is what congested the mesh into never
+    // recovering; see RECONNECT_WINDOW_MS above.
+    if (missingSinceMs == 0) missingSinceMs = millis();
+    bool burst = (millis() - missingSinceMs < RECONNECT_WINDOW_MS) &&
+                 dutyAllows(64);  // a typical HB frame; frame[] is unset if pktBuild failed
+    hbTimer.setPeriod(burst ? RECONNECT_HB_MS + (uint32_t)random(0, 800)
+                            : HB_INTERVAL_MS + (uint32_t)random(0, HB_JITTER_MS));
   } else {
+    missingSinceMs = 0;                  // everyone is back - reset the window
     hbTimer.setPeriod(HB_INTERVAL_MS + (uint32_t)random(0, HB_JITTER_MS));
   }
 }
@@ -1731,7 +1813,8 @@ void sendLocation() {
            lat, lon, gpsSats, (unsigned)src, (unsigned long)(ageMs / 1000UL));
 
   char frame[MAX_PACKET_LEN];
-  if (pktBuild(frame, sizeof(frame), "GPS", MY_ID, "*", nextMsgId(), 0, payload))
+  if (pktBuild(frame, sizeof(frame), "GPS", MY_ID, "*", nextMsgId(), 0, payload)
+      && dutyAllows((uint16_t)strlen(frame)))
     radioEnqueue(frame);
 }
 
@@ -1758,7 +1841,8 @@ void sendRoutes() {
   // An empty advert is still worth sending - it announces we are alive and
   // gives our neighbours a 1-hop route to us.
   char frame[MAX_PACKET_LEN];
-  if (pktBuild(frame, sizeof(frame), "RT", MY_ID, "*", nextMsgId(), 0, payload))
+  if (pktBuild(frame, sizeof(frame), "RT", MY_ID, "*", nextMsgId(), 0, payload)
+      && dutyAllows((uint16_t)strlen(frame)))
     radioEnqueue(frame);
 }
 
@@ -2592,6 +2676,11 @@ void handleSerial() {
 //  SETUP
 // ===========================================================================
 void setup() {
+  // BEFORE Serial.begin() - changing the CPU clock afterwards re-divides the
+  // UART and garbles the console. 240 MHz is wasted here and is a large part
+  // of why the board runs hot; the loop is idle most of the time anyway.
+  setCpuFrequencyMhz(CPU_MHZ);
+
   Serial.begin(SERIAL_BAUD);
   delay(200);
 

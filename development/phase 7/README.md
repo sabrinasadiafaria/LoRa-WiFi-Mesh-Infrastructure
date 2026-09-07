@@ -106,15 +106,15 @@ rssi/snr/age/position) instead of pre-formatted HTML, so the page renders it pro
 
 ## Tuning for your site
 
-`LORA_SF` is now the one knob that matters, and everything adapts to it automatically:
+`LORA_SF` is the one knob that matters, and everything adapts to it automatically:
 
 | Situation | Set `LORA_SF` |
 |---|---|
 | Indoors, short range, want speed | 7 |
-| **Mixed indoor + outdoor (default)** | **9** |
+| **Mixed indoor + outdoor (default)** | **8** |
 | Maximum range, slow | 10 or 11 |
 
-**Change it in all three sketches AND in `pi/sx1278.py` (`SF = 9`).** Nodes on different spreading
+**Change it in all three sketches AND in `pi/sx1278.py` (`SF = 8`).** Nodes on different spreading
 factors cannot hear each other at all — this is the single most common way to end up with a silent
 mesh.
 
@@ -213,3 +213,126 @@ Both halves are fixed:
 
 `Multiple libraries were found for "WiFi.h"` in the same output is only a warning — the IDE
 correctly picks the ESP32 core's copy. Nothing to do about it.
+
+---
+
+## Fix — the mesh congested itself into never re-forming (SF9 meltdown)
+
+After flashing Phase 7 the nodes lost each other and could not reach the Pi. This was not a
+range problem, and not the SF9 change on its own — it was a **positive feedback loop** that SF9
+finally made fatal.
+
+### The bug
+
+`sendHeartbeat()` had this since Phase 6:
+
+```c
+} else if (anyNeighborMissing()) {
+  hbTimer.setPeriod(RECONNECT_HB_MS + random(0, 800));   // every 6 s
+}
+```
+
+`anyNeighborMissing()` is true for as long as **any node this board has ever met** is absent, and
+nothing bounded it. So a node that lost a peer beaconed every 6 s **forever**.
+
+| | airtime per HB | HB duty per node at 6 s |
+|---|---|---|
+| SF7 (phases 3–6) | ~113 ms | ~1.9 % — harmless |
+| **SF9 (phase 7)** | **~330 ms** | **~5.5 %** |
+
+With three nodes plus the Pi all in that state, and `RT` and `GPS` beacons on top, the channel
+went past ~50 % occupancy. Then it feeds itself:
+
+> lose a peer → beacon 2.5× faster → more collisions → lose more peers → beacon faster still
+
+Once it tips, it never comes back on its own — which is exactly "nodes are lost, turning them off
+and on is the only thing that helps". Power-cycling worked because a fresh boot has no known peers,
+so `anyNeighborMissing()` is false until it learns some.
+
+### The fixes
+
+**1. The fast-reconnect burst is now bounded.** It runs for `RECONNECT_WINDOW_MS` (90 s) after a
+peer goes missing, then falls back to the normal 15 s rate. A node that comes back announces itself
+with `bootBeacons` anyway, so nothing is lost by giving up the burst.
+
+**2. A duty-cycle governor.** Every completed transmission is charged to a rolling 60 s budget
+(`DUTY_BUDGET_PERMIL`, 10 %). Routine beacons — `HB` in reconnect mode, `RT`, `GPS` — ask
+`dutyAllows()` before queueing. **`SOS`, `DATA`, `SOSACK` and `CMD` are never governed.** Steady
+state is ~2 %, so this never fires in normal operation; it exists so no future timing change can
+congest the channel again. When it does fire you get one line every 30 s:
+
+```
+[duty] channel busy - 6120 of 6000 ms used this minute, 14 beacons skipped so far
+```
+
+**3. `LORA_SF` 9 → 8.** SF9 was a 3× airtime increase for a 2× range gain, and the airtime is what
+broke things. SF8 is −126 dBm — still **+3 dB / ~1.4× the range of the SF7** used through Phase 6 —
+at **half** SF9's airtime.
+
+| | SF7 | **SF8 (now)** | SF9 |
+|---|---|---|---|
+| Sensitivity | −123 dBm | **−126 dBm** | −129 dBm |
+| Airtime, 60-byte frame | 113 ms | **205 ms** | 370 ms |
+| Range vs SF7 | 1× | **~1.4×** | ~2× |
+
+> **`pi/sx1278.py` is now `SF = 8` too. `git pull` on the Pi or it will hear nothing** — nodes on
+> different spreading factors are completely deaf to each other. This is the most common way to end
+> up with a silent mesh.
+
+If open-space range still isn't enough once the mesh is stable, raise `LORA_SF` to 9 **in all three
+sketches and on the Pi** — airtime is computed from it and the governor adapts. It will be safe now
+that the reconnect storm is bounded.
+
+---
+
+## The boards running hot
+
+**Warm is normal. Too hot to keep a finger on is not, and it causes exactly these dropouts.**
+
+A brown-out is a 3.3 V rail sagging below ~2.8 V, and the worst moment for it is *during a LoRa
+transmit* — the SX1278 pulls ~120 mA on top of everything else. The node either resets or emits a
+corrupted frame, so its peers hear nothing and time it out. **Heat and "the nodes keep losing each
+other" are very likely the same fault.**
+
+### What the firmware now does
+
+| Change | Saves |
+|---|---|
+| `setCpuFrequencyMhz(80)` — was 240 MHz | ~30–40 mA continuous. 80 MHz is the lowest the Wi-Fi stack allows and is far more than this sketch needs |
+| `WiFi.setTxPower(WIFI_POWER_11dBm)` | a large share of the AP's average current — the phone is a metre away |
+| `LORA_SF` 9 → 8 | halves how long the PA is keyed on every transmit |
+
+`LORA_TXPOWER` is deliberately left at 17 dBm — that is the range budget, and it is only on for
+~200 ms at a time.
+
+### What you have to fix in hardware
+
+Firmware can only do so much. **Check which part is actually hot:**
+
+- **The small 3-pin regulator next to the USB socket (AMS1117)** — this is the usual culprit. It
+  drops 5 V to 3.3 V linearly, so with the LoRa module, OLED and GPS all fed from the board's `3V3`
+  pin it burns roughly `(5 − 3.3) × 0.4 A ≈ 0.7 W` in a part the size of a grain of rice. It will be
+  genuinely painful to touch and it will sag under load.
+  - **Fix:** power the SX1278 (and ideally the GPS) from a **separate 3.3 V supply** with a common
+    ground, not from the ESP32 board's `3V3` pin. Or feed the board from a good 5 V source and keep
+    the peripheral load off that pin.
+- **The ESP32 module itself (the metal can)** — 50–60 °C with an AP running is normal and fine.
+- **The LoRa module** — should be barely warm. If it is hot, check you have not wired it to 5 V,
+  and that the antenna is actually connected. **Transmitting without an antenna damages the PA** and
+  is a good way to end up with one node that has poor range for no visible reason.
+
+### Confirming it
+
+The boot banner already tells you. Watch for this on a node that dropped out:
+
+```
+############################################################
+#  WHY DID THIS NODE LAST RESTART?
+#     BROWNOUT - 3.3V rail sagged  <<< POWER PROBLEM
+############################################################
+```
+
+If you see `BROWNOUT`, it is power, not radio — a better USB cable, a better power bank, a 470 µF
+capacitor across the LoRa module's 3V3/GND, or a separate supply for the module. If you see
+`POWERON` or `SW_RESET` instead, the node was not resetting and the problem was the congestion
+above.

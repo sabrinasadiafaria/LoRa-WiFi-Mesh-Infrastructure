@@ -5,7 +5,7 @@ Deliberately small and register-explicit so the PHY matches the ESP32 nodes
 EXACTLY. The nodes run the Sandeep Mistry LoRa library; this mirrors its
 begin() sequence register for register:
 
-    433 MHz | SF9 | BW 125 kHz | CR 4/5 | explicit header | CRC on
+    433 MHz | SF8 | BW 125 kHz | CR 4/5 | explicit header | CRC on
     sync word 0x2A | preamble 8 | PA_BOOST 17 dBm
 
 If any of those disagree with development/phase 7/Node *.md the Pi will hear
@@ -44,7 +44,7 @@ RST_PIN = 25                          # BCM
 
 # ---- PHY - MUST match the ESP32 nodes --------------------------------------
 FREQ_HZ = 433_000_000
-SF = 9                                 # MUST match LORA_SF in the node sketches
+SF = 8                                 # MUST match LORA_SF in the node sketches
 BW_HZ = 125_000
 CR_DENOM = 5                          # 4/5
 TX_POWER_DBM = 17
