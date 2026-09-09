@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS team_status (
 CREATE TABLE IF NOT EXISTS raw_log (
     ts REAL, kind TEXT, data TEXT
 );
+CREATE TABLE IF NOT EXISTS rover_status (
+    id TEXT PRIMARY KEY, mode TEXT, obstacle_cm INTEGER, battery_pct INTEGER, ts REAL
+);
 """
 
 
@@ -102,6 +105,15 @@ class DB:
         self._run("INSERT INTO raw_log(ts,kind,data) VALUES(?,?,?)",
                   (time.time(), kind, str(data)[:400]))
 
+    def rover(self, nid, mode, obstacle_cm, battery_pct):
+        self._run(
+            """INSERT INTO rover_status(id,mode,obstacle_cm,battery_pct,ts)
+               VALUES(?,?,?,?,?)
+               ON CONFLICT(id) DO UPDATE SET mode=excluded.mode,
+                 obstacle_cm=excluded.obstacle_cm,
+                 battery_pct=excluded.battery_pct, ts=excluded.ts""",
+            (nid, mode, obstacle_cm, battery_pct, time.time()))
+
     # ---- readers for the dashboard --------------------------------
     def state(self):
         cur = self._c.execute("SELECT id,last_seen,rssi,snr,uptime,heap,online FROM nodes")
@@ -139,5 +151,10 @@ class DB:
                   for r in self._c.execute(
                       "SELECT id,team,state,ts FROM team_status ORDER BY id")]
 
+        rover = [dict(zip(("id", "mode", "obstacle_cm", "battery_pct", "ts"), r))
+                 for r in self._c.execute(
+                     "SELECT id,mode,obstacle_cm,battery_pct,ts FROM rover_status")]
+
         return {"nodes": nodes, "positions": latest, "trails": trails,
-                "sos": sos, "messages": msgs, "reports": reports, "status": status}
+                "sos": sos, "messages": msgs, "reports": reports, "status": status,
+                "rover": rover}

@@ -91,6 +91,6 @@ Detailed flashing instructions: `docs/BUILD_AND_FLASH.md`.
 | 5 Pi command centre + dashboard | 🟡 code written — awaiting hardware verification |
 | 6 Reliability + GPS | 🟡 code written — awaiting hardware verification |
 | 7 Range + GPS + new UI | 🟡 code written — awaiting hardware verification |
-| 8 Autonomous rover | ⬜ not started |
+| 8 Autonomous rover | 🟡 code written — awaiting hardware verification |
 | 9 Integration & field test | ⬜ not started |
 | 10 Demo & documentation | ⬜ not started |

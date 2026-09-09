@@ -48,6 +48,30 @@
       <div id="sendmsg"></div>
     </section>
 
+    <section id="rover-section" class="hidden">
+      <h2>Rover</h2>
+      <div id="rover-status" class="row" style="flex-wrap:wrap;gap:10px;margin-bottom:8px"></div>
+      <div class="row">
+        <select id="rover-mode-select">
+          <option value="MANUAL">MANUAL</option>
+          <option value="AUTO">AUTO</option>
+          <option value="RELAY">RELAY</option>
+        </select>
+        <button onclick="roverMode()">Set mode</button>
+      </div>
+      <div id="dpad">
+        <button class="dbtn" style="grid-area:up"    data-verb="FWD"   title="Forward">&uarr;</button>
+        <button class="dbtn" style="grid-area:left"  data-verb="LEFT"  title="Left">&larr;</button>
+        <button class="dbtn stop" style="grid-area:mid" data-verb="STOP" title="Stop">&#9632;</button>
+        <button class="dbtn" style="grid-area:right" data-verb="RIGHT" title="Right">&rarr;</button>
+        <button class="dbtn" style="grid-area:down"  data-verb="BACK"  title="Back">&darr;</button>
+      </div>
+      <div id="rover-hint" style="font-size:11px;color:#666;margin-top:4px">
+        MANUAL mode only. Hold a direction - it re-sends every 400ms; release or
+        lose the connection and the rover auto-stops within ~600ms on its own.
+      </div>
+    </section>
+
     <section>
       <h2>Reports</h2>
       <ul id="reports"></ul>

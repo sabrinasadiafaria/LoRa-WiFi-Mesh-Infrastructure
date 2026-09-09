@@ -14,7 +14,7 @@ const trails  = {};   // id -> L.polyline
 const sosRing = {};   // id -> L.circle
 
 function nodeColour(id) {
-  return { A: '#4da3ff', B: '#ffb040', C: '#a06cff', PI: '#5fd08a' }[id] || '#ccc';
+  return { A: '#4da3ff', B: '#ffb040', C: '#a06cff', PI: '#5fd08a', R: '#20c5c5' }[id] || '#ccc';
 }
 
 function icon(id) {
@@ -89,6 +89,24 @@ async function refresh() {
     `<tr><td>${s.id}</td><td>${s.team}</td><td>${s.state}</td></tr>`).join('')
     || '<tr><td colspan=3 style="color:#666">none yet</td></tr>';
 
+  // rover panel - hidden entirely until a rover has actually reported in
+  const roverList = st.rover || [];
+  const roverSec = document.getElementById('rover-section');
+  if (roverList.length) {
+    roverSec.classList.remove('hidden');
+    document.getElementById('rover-status').innerHTML = roverList.map(rv => {
+      const warn = rv.obstacle_cm >= 0 && rv.obstacle_cm < 25;
+      const range = rv.obstacle_cm >= 0 ? rv.obstacle_cm + 'cm' : 'clear';
+      const batt = rv.battery_pct >= 0 ? rv.battery_pct + '%' : 'n/a';
+      return `<span class="stat-pill">${rv.id} &middot; ${rv.mode}</span>` +
+             `<span class="stat-pill${warn ? ' warn' : ''}">range ${range}</span>` +
+             `<span class="stat-pill">batt ${batt}</span>` +
+             `<span class="stat-pill">seen ${fmtAge(now - rv.ts)} ago</span>`;
+    }).join('');
+  } else {
+    roverSec.classList.add('hidden');
+  }
+
   // reports
   document.getElementById('reports').innerHTML = st.reports.map(r =>
     `<li><span class="t">${new Date(r.ts * 1000).toLocaleTimeString()}</span>
@@ -139,7 +157,7 @@ function connectSSE() {
   es.onmessage = ev => {
     let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
     if (m.kind === 'sos') refresh();          // surface immediately
-    else if (['pos', 'node', 'report', 'status', 'message', 'hb', 'command'].includes(m.kind)) {
+    else if (['pos', 'node', 'report', 'status', 'message', 'hb', 'command', 'rover'].includes(m.kind)) {
       clearTimeout(connectSSE._t);
       connectSSE._t = setTimeout(refresh, 300);   // debounce bursts
     }
@@ -167,6 +185,50 @@ async function cmd(verb) {
   });
   document.getElementById('sendmsg').textContent =
     r.ok ? `${verb} sent to ${dest}` : 'command failed';
+}
+
+/* ---- rover drive controls -------------------------------------------------
+   The firmware's safety model is a bounded drive pulse (MANUAL_PULSE_MS,
+   ~600ms) per command - see Node Rover.md. So "holding" a direction here
+   means re-sending it every 400ms (inside the pulse window) for as long as
+   the button/touch is held; releasing, or losing the connection, means the
+   rover coasts to a stop on its own within one pulse - no separate "did the
+   stop command arrive" failure mode to worry about. We also send an
+   explicit STOP on release, for an instant stop rather than waiting out the
+   last pulse. */
+let roverHoldTimer = null;
+
+function roverSendVerb(verb) {
+  fetch('/api/command', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dest: 'R', verb })
+  }).catch(() => {});
+}
+function roverStartHold(verb) {
+  if (verb === 'STOP') { roverSendVerb('STOP'); return; }
+  roverSendVerb(verb);
+  clearInterval(roverHoldTimer);
+  roverHoldTimer = setInterval(() => roverSendVerb(verb), 400);
+}
+function roverStopHold(verb) {
+  clearInterval(roverHoldTimer);
+  roverHoldTimer = null;
+  if (verb !== 'STOP') roverSendVerb('STOP');
+}
+document.querySelectorAll('#dpad .dbtn').forEach(btn => {
+  const verb = btn.dataset.verb;
+  btn.addEventListener('mousedown', () => roverStartHold(verb));
+  btn.addEventListener('touchstart', e => { e.preventDefault(); roverStartHold(verb); });
+  ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(ev =>
+    btn.addEventListener(ev, () => roverStopHold(verb)));
+});
+async function roverMode() {
+  const arg = document.getElementById('rover-mode-select').value;
+  const r = await fetch('/api/command', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dest: 'R', verb: 'MODE', arg })
+  });
+  document.getElementById('sendmsg').textContent = r.ok ? `rover mode -> ${arg}` : 'mode command failed';
 }
 
 refresh();

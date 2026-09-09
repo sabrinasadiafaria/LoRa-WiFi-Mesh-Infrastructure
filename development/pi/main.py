@@ -59,6 +59,9 @@ def main():
                                 data["lon"], data.get("team", ""))
             elif kind == "status":
                 database.status(data["id"], data["team"], data["state"])
+            elif kind == "rover":
+                database.node_seen(data["id"], rssi=data.get("rssi"))
+                database.rover(data["id"], data["mode"], data["obstacle"], data["battery"])
             elif kind == "route":
                 database.raw("route", data)
             database.raw(kind, data)

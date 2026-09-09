@@ -42,4 +42,17 @@ ul { list-style: none; margin: 0; padding: 0; font-size: 12px;
 li { padding: 3px 0; border-top: 1px solid #262628; color: #bbb; }
 li .t { color: #666; }
 
+/* rover panel */
+.stat-pill { padding: 3px 9px; border-radius: 10px; font-size: 12px;
+             background: #2c2c2e; font-family: ui-monospace, Menlo, monospace; }
+.stat-pill.warn { background: #7a1f1f; }
+#dpad { display: grid; width: 150px; margin: 8px auto 0;
+        grid-template-columns: repeat(3, 46px);
+        grid-template-rows: repeat(3, 46px);
+        gap: 4px;
+        grid-template-areas: ".    up    ." "left mid   right" ".    down  ."; }
+.dbtn { font-size: 18px; font-weight: 700; }
+.dbtn.stop { background: #7a1f1f; }
+.dbtn:active { background: #4a4a4e; }
+
 .leaflet-container { background: #2a2a2a; }

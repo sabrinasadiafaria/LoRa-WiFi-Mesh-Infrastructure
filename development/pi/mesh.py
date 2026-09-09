@@ -297,6 +297,22 @@ class Mesh:
             if len(f) == 2:
                 self.on_event("status", {"id": src, "team": f[0], "state": f[1]})
 
+        elif t == "ROVER":
+            # payload: mode,obstacle_cm,battery_pct - position is NOT here,
+            # the rover also sends a normal GPS: broadcast (handled above)
+            # and the dashboard joins the two by node id.
+            f = pl.split(",")
+            if len(f) >= 3:
+                self.on_event("rover", {
+                    "id": src, "mode": f[0],
+                    "obstacle": _int(f[1], -1),
+                    "battery": _int(f[2], -1),
+                    "rssi": rssi,
+                })
+            # ROVER is in CONSUMED_NO_FWD - A/B/C already relay it hop by hop
+            # (see their Phase 8 header note); the Pi is the end of the line
+            # for it, same as GPS/STAT, so no _forward_if_needed() call here.
+
         elif t == "DATA":
             if pkt["dest"] == MY_ID:
                 self.on_event("message", {"src": src, "text": pl})

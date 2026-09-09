@@ -76,14 +76,30 @@ def api_send():
     return jsonify(ok=True)
 
 
+DEST_VERBS = {
+    "A": {"WHERE", "SOS", "SOSCLR", "PING"},
+    "B": {"WHERE", "SOS", "SOSCLR", "PING"},
+    "C": {"WHERE", "SOS", "SOSCLR", "PING"},
+    "*": {"WHERE", "SOS", "SOSCLR", "PING"},
+    # Phase 8: the rover's drive/mode verbs. FWD/BACK/LEFT/RIGHT/STOP are the
+    # bounded manual-drive pulse (see Node Rover.md's dead-man-switch note -
+    # a dashboard button held down must keep POSTing to keep it moving).
+    "R": {"WHERE", "SOS", "SOSCLR", "PING",
+          "FWD", "BACK", "LEFT", "RIGHT", "STOP", "MODE"},
+}
+MODE_ARGS = {"MANUAL", "AUTO", "RELAY"}
+
+
 @app.route("/api/command", methods=["POST"])
 def api_command():
     body = request.get_json(force=True, silent=True) or {}
     dest = (body.get("dest") or "").strip().upper()
     verb = (body.get("verb") or "").strip().upper()
-    arg = (body.get("arg") or "").strip()
-    if dest not in ("A", "B", "C", "*") or verb not in ("WHERE", "SOS", "SOSCLR", "PING"):
+    arg = (body.get("arg") or "").strip().upper()
+    if dest not in DEST_VERBS or verb not in DEST_VERBS[dest]:
         return jsonify(ok=False, error="bad dest or verb"), 400
+    if verb == "MODE" and arg not in MODE_ARGS:
+        return jsonify(ok=False, error="MODE arg must be MANUAL/AUTO/RELAY"), 400
     MESH.send_cmd(dest, verb, arg)
     DB.raw("cmd_out", f"{dest} {verb} {arg}")
     publish("command", {"dest": dest, "verb": verb, "arg": arg})

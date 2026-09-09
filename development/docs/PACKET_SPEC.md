@@ -53,9 +53,22 @@ v1|SOS|A|*|41|4|23.797810,90.449720,MAYDAY INJURED RESCUER|7c
 | `SOSACK` | Phase 4 | node | `<acking_node>,<original_msgid>` | yes | Optional: confirms an SOS was seen by the command center / another node. |
 | `RPT`  | Phase 4 | `*` | `<code>,<lat>,<lon>,<team>` | yes | Quick rescue report. `code` ∈ `VICTIM_FOUND` `MEDICAL` `BLOCKED` `DANGER`. |
 | `STAT` | Phase 4 | `*` | `<team>,<state>` | no | Team status. `state` ∈ `AVAILABLE` `SEARCHING` `VICTIM_FOUND` `NEED_ASSIST` `EMERGENCY`. |
-| `CMD`  | Phase 5 | node | `<verb>[,<arg>]` | yes | Command centre -> node. verb: `WHERE` (reply GPS), `PING` (reply pong), `SOS` (raise), `SOSCLR` (clear). |
-| `MOVE` | Phase 6 | `RV` | `<cmd>` (`FWD` `BACK` `LEFT` `RIGHT` `STOP` `AUTO` `RELAY`) | yes | Rover drive command from dashboard/portal. |
-| `ROVER`| Phase 6 | `*` | `<mode>,<obstacle_cm>,<batt_pct>,<lat>,<lon>` | no | Rover telemetry. |
+| `CMD`  | Phase 5 | node | `<verb>[,<arg>]` | yes | Command centre -> node. verb: `WHERE` (reply GPS), `PING` (reply pong), `SOS` (raise), `SOSCLR` (clear). **As shipped in Phase 8**, also carries the rover's drive/mode verbs — see the footnote below. |
+| `ROVER`| Phase 8 | `*` | `<mode>,<obstacle_cm>,<batt_pct>` | **yes** (TTL 4) | Rover telemetry. |
+
+> **As actually shipped (Phase 8), two things differ from this table and from the rest of this
+> still-draft spec** — see `development/phase 8/README.md` and `development/docs/ROVER.md` for the
+> reasoning:
+> - There is no separate `MOVE:` type. Rover driving (`FWD`/`BACK`/`LEFT`/`RIGHT`/`STOP`) and mode
+>   switching (`MODE,<MANUAL|AUTO|RELAY>`) are new **verbs on the existing `CMD:` type**, addressed
+>   to node id **`R`** (not `RV`) — reusing the routed, forwarded, never-duty-governed channel
+>   Phase 5 already built for `WHERE`/`PING`/`SOS`/`SOSCLR`, rather than adding a parallel packet
+>   type that every forwarder would need to learn about separately.
+> - `ROVER:` carries **no position** — the rover already sends a normal `GPS:` broadcast like every
+>   other node, and the Pi dashboard joins the two by node id. It also **is** forwarded (unlike
+>   `HB`/`RT`/`GPS`, which are one-hop-only in this codebase): a mobile relay's whole purpose is
+>   being the node most likely to be out of the Pi's direct range, so its telemetry needs the same
+>   hop-by-hop relay `SOS`/`RPT` already get.
 
 New types are added by later phases **without** changing existing ones. If a field layout must
 change, bump `VER` to `v2` and update this table.
