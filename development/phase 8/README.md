@@ -70,28 +70,170 @@ obstacle.
 
 ---
 
-## Hardware
+## Hardware — the rover is an ESP32-S3, not a classic ESP32
 
-**Additional to what A/B/C already use** (LoRa SPI 18/19/23/5/14/26, I2C 21/22, GPS 16/17, SOS
-button 4, entropy 34):
+**Nodes A, B and C stay on the classic ESP32. Only the rover is an S3, and the two pin maps are
+completely different — you cannot flash the rover sketch to a classic ESP32 or vice versa.**
 
-| Component | Pins | Notes |
-|---|---|---|
-| Left motor (H-bridge) | IN1=27, IN2=25, EN=13 | direction-only, EN is a hard on/off, not PWM speed |
-| Right motor (H-bridge) | IN1=33, IN2=32, EN=2 | GPIO2 also drives the onboard LED on many boards - harmless, it'll just blink with the right motor |
-| Ultrasonic (HC-SR04) | TRIG=15, ECHO=35 | **ECHO is 5V logic and the ESP32 is not 5V tolerant - use a voltage divider (e.g. 1k/2k) or you will damage the pin.** TRIG is a direct ESP32 output, no divider needed. |
-| Battery sense (optional) | ADC=36 (VP) | Via a voltage divider sized for your pack. `BATTERY_ADC_VMIN/VMAX/DIVIDER` in the sketch are a starting point for a 2S Li-ion motor pack - **measure your actual divider with a multimeter and correct them**, or the reported percentage is fiction, not a real reading. |
+Most of the pin numbers A/B/C use simply don't work on an S3:
 
-**Mandatory, doubly true with motors on board (see Phase 6/7's brownout notes):**
-- **Separate battery for the motors vs the logic (ESP32 + LoRa + GPS + OLED), common ground.**
-  Motor stall current pulled through a shared supply will brown out the ESP32 mid-drive - that
-  looks exactly like a random reset, not a motor problem, and the boot banner's `BROWNOUT` line is
-  where you'll actually see it.
-- Flyback diodes / decoupling caps on the H-bridge if your breakout doesn't already have them (most
-  L298N boards do).
-- **First power-up: wheels off the ground.** See the safety model above.
+| Classic ESP32 pins | On the ESP32-S3 |
+|---|---|
+| 22, 23, 24, 25 | **do not exist** |
+| 26–32 | the SPI bus to the flash/PSRAM — touching them crashes the chip |
+| 33–37 | used by the **octal PSRAM** on N8R8/N16R8 modules (most DevKitC-1 boards) |
+| 34–39 "input-only" | the S3 has **no input-only pins**; all of these are ordinary GPIO |
+| ADC on 32–39 | S3 **ADC1 is GPIO 1–10 only** |
 
----
+Also reserved on the S3 and left unused here: **19/20** (native USB D−/D+), **43/44** (UART0 /
+serial monitor), **0, 3, 45, 46** (strapping pins), **38 and 48** (onboard RGB LED — which one
+depends on board revision). Everything below comes from the safe set **1–18, 21, 39–42, 47**.
+GPIO 39–42 are also the JTAG pins; fine as GPIO, it only matters if you want hardware JTAG.
+
+**Board setting in the Arduino IDE: "ESP32S3 Dev Module".** If the serial monitor stays blank
+after upload, enable **USB CDC On Boot**.
+
+### Full wiring — Node Rover (ESP32-S3)
+
+| Component | Pin on part | → ESP32-S3 GPIO | Notes |
+|---|---|---|---|
+| **LoRa SX1278** | SCK | **12** | SPI2 / "FSPI" defaults |
+| | MISO | **13** | |
+| | MOSI | **11** | |
+| | NSS / CS | **10** | |
+| | RST | **14** | |
+| | DIO0 | **21** | |
+| | VCC | **3V3** | **never 5 V** |
+| | GND | GND | |
+| **OLED SSD1306** | SDA | **8** | I2C defaults |
+| | SCL | **9** | |
+| | VCC / GND | 3V3 / GND | |
+| **NEO-M8N GPS** | TX (module out) | **17** | Serial2 RX |
+| | RX (module in) | **18** | Serial2 TX |
+| | VCC / GND | 3V3 / GND | |
+| **L298N** | IN1 | **5** | left pair direction |
+| | IN2 | **6** | |
+| | ENA | **4** | **remove the ENA jumper** |
+| | IN3 | **7** | right pair direction |
+| | IN4 | **16** | |
+| | ENB | **42** | **remove the ENB jumper** |
+| | +12V terminal | motor battery **+** | see power notes |
+| | GND terminal | motor battery **−** *and* ESP32 GND | **common ground is mandatory** |
+| | OUT1 / OUT2 | front-left **+** rear-left motors, in parallel | |
+| | OUT3 / OUT4 | front-right **+** rear-right motors, in parallel | |
+| **HC-SR04** | TRIG | **40** | direct, it's an ESP32 output |
+| | ECHO | **41** | **through a divider — see below** |
+| | VCC | 5 V | it will not work reliably on 3.3 V |
+| | GND | GND | |
+| **Servo (SG90/MG90S)** | signal | **39** | 3.3 V signal is fine for these |
+| | VCC | 5 V rail, **not** 3V3 | see power notes |
+| | GND | GND | |
+| **SOS button / E-STOP** | one leg | **15** | other leg to GND; internal pull-up, no resistor |
+| **Battery sense** (optional) | divider midpoint | **2** | ADC1_CH1 |
+| **Entropy** | — | **1** | **leave unconnected** — it must float |
+
+### The ECHO divider is not optional
+
+The HC-SR04 drives ECHO at **5 V** and the ESP32-S3 is **not 5 V tolerant**. Connecting it directly
+will damage the pin.
+
+```
+HC-SR04 ECHO ──[ 1k ]──┬── GPIO 41
+                       │
+                    [ 2k ]
+                       │
+                      GND
+```
+
+That gives 5 V × 2/(1+2) = 3.3 V. Any pair with roughly a 1:2 ratio works (1k/2k, 10k/20k).
+TRIG needs no divider — it's an output from the ESP32 into the sensor.
+
+### Four motors on a two-channel L298N
+
+The L298N has two channels and there are four motors, so they go on in **pairs, in parallel**:
+both left motors to OUT1/OUT2, both right motors to OUT3/OUT4. Each channel then drives two.
+
+- A 6 V 100 RPM BO gear motor draws roughly **150 mA** free-running and **~700–800 mA** stalled, so
+  a channel sees ~300 mA normally and up to ~1.6 A if both wheels on that side jam. That is inside
+  the L298N's 2 A per channel, but **fit the heatsink** — it will get hot.
+- **The L298N drops about 1.4–2 V.** To actually get 6 V at the motors you need roughly **7.5–8 V
+  in** — a 2S Li-ion pack (7.4 V) is close to ideal, 6×AA (9 V) also works. Feeding it 5 V leaves
+  only ~3.5 V at the motors and they will be weak and stall easily.
+- **Remove the ENA and ENB jumpers.** With them fitted the driver ignores GPIO 4 and 42 and the
+  motors are permanently enabled — the sketch's stop and E-STOP would do nothing.
+- If Vin is above 12 V, also remove the on-board 5 V regulator jumper.
+
+### Power — two supplies, one ground
+
+**This matters more here than anywhere else in the project.** Motor inrush pulled through a shared
+supply browns out the ESP32 mid-drive, and it looks exactly like a random reset rather than a motor
+problem. Phases 6 and 7 already chased this on the static nodes.
+
+- **Motor battery** → L298N `+12V`/`GND` only.
+- **Logic supply** (separate power bank or BEC) → ESP32-S3, LoRa, OLED, GPS.
+- **Tie the two grounds together.** Without a common ground the L298N inputs float and the motors
+  behave randomly.
+- Do **not** run the ESP32 off the L298N's on-board 5 V output while the motors are moving.
+- The **servo** also belongs on the 5 V rail, not on the ESP32's 3V3 pin — an SG90 can pull several
+  hundred mA when it stalls and will drag the 3.3 V rail down with it.
+- The boot banner's `WHY DID THIS NODE LAST RESTART?` box says `BROWNOUT` when this is happening.
+- **First power-up: wheels off the ground.**
+
+## Bugs found in the rover code (all fixed)
+
+Four real defects, found reviewing `Node Rover.md` before the S3 port. Two of them are safety
+issues on a machine that drives itself.
+
+### 1. A dead ultrasonic sensor read as "path clear" *(safety)*
+
+`ultrasonicCm = -1` was used for both "nothing within range" and "no echo came back", and AUTO
+tested `ultrasonicCm > 0 && ultrasonicCm < AUTO_OBSTACLE_CM`. So an **unplugged or failed sensor
+meant no obstacle was ever detected** and the rover drove forward until it hit something.
+
+The fix distinguishes the two, which is possible because a working HC-SR04 with an empty room in
+front of it **still pulses ECHO** (~38 ms). The ISR now records whether ECHO rose *at all*:
+
+- rising edge seen, no falling edge in time → nothing in range. Keep driving.
+- **no rising edge at all**, `ULTRASONIC_FAULT_MISSES` (20 pings ≈ 2 s) in a row → the sensor is
+  not answering. AUTO stops the motors and refuses to drive until it comes back.
+
+### 2. The random turn wasn't random — and was always the shortest *(behaviour)*
+
+```c
+} else { // RA_TURN
+  uint32_t turnMs = AUTO_TURN_MS_MIN + random(0, AUTO_TURN_MS_MAX - AUTO_TURN_MS_MIN);
+  if (now - autoStateSince > turnMs) { ... }
+```
+
+`turnMs` was drawn **fresh on every loop pass**. The turn ended as soon as the elapsed time beat
+*any one* low draw, so with a loop running ~1000×/s it ended at essentially `AUTO_TURN_MS_MIN`
+every time. The rover always turned the same short amount, which is exactly the behaviour that
+leaves it nose-into-a-corner. The duration is now **latched once** when the turn starts.
+
+### 3. `millis() + MANUAL_PULSE_MS` stored in the future *(latent)*
+
+```c
+manualDriveUntilMs = millis() + MANUAL_PULSE_MS;   // ...
+if (manualDriving && millis() > manualDriveUntilMs) { motorStop(); }
+```
+
+This is the same unsigned-wrap pattern the project's own `Interval` helper exists to avoid — it is
+documented as bug #2 in the Phase 0 audit. Now stores the **start** time and compares elapsed.
+
+### 4. A late echo was credited to the next ping
+
+`echoNewReading` was never cleared before triggering, so an echo that arrived after its own
+timeout was consumed as the *next* ping's reading — a stale distance reported as current. It is now
+cleared in `ultrasonicTrigger()`.
+
+### Also changed
+
+- **AUTO now looks before it turns.** With the sensor on a servo, hitting an obstacle triggers
+  back off → stop → look left → look right → **turn toward whichever side is actually clearer**,
+  instead of guessing. Random choice is kept only as the tie-break.
+- Drive pins are no longer rewritten on every loop pass while going straight.
+- `roverEmergencyStop()` clears the new `motorsMoving` flag, so an E-STOP during AUTO cannot be
+  undone by the next loop pass re-asserting forward.
 
 ## Test procedure
 
@@ -109,6 +251,16 @@ reported in) showing mode, obstacle range, and battery, refreshing roughly every
 Press `i`/`k`/`j`/`l`/`o` on serial, or use the dashboard's arrow buttons.
 **Pass:** each direction spins the correct wheels the correct way; the rover stops within ~600 ms
 of releasing a held dashboard button even without pressing STOP.
+
+### Test 3b — the servo actually moves
+Press `w` three times and watch the sensor head. It must physically swing left and right.
+**Pass:** it moves. If it does not, AUTO cannot choose a turn direction and falls back to a random
+one - and check the servo is on 5V, not the ESP32 3V3 pin.
+
+### Test 3c — ultrasonic fault detection
+Unplug the HC-SR04 ECHO wire, then switch to AUTO.
+**Pass:** the rover does NOT drive. Serial repeats `AUTO HALTED - ultrasonic not responding`.
+Reconnect it and AUTO resumes. This is the check that a dead sensor cannot read as "path clear".
 
 ### Test 4 — AUTO obstacle avoidance
 Wheels on the ground, clear floor space. Switch to AUTO (serial `m`, or dashboard mode select).
@@ -152,7 +304,8 @@ Record results in `../docs/TEST_REPORT.md`.
 | `m` | cycle mode MANUAL → AUTO → RELAY → MANUAL |
 | `i` `k` `j` `l` | drive forward / back / left / right (MANUAL only, same bounded pulse as a dashboard command) |
 | `o` | stop |
-| `u` | print the current ultrasonic reading |
+| `u` | print the ultrasonic reading, plus the consecutive-miss count |
+| `w` | sweep the servo centre -> left -> right (one step per press) |
 
 Everything else (`n r g s a|b|c t p S C 1-4 5-8 v N R T h`) is unchanged from Node C.
 

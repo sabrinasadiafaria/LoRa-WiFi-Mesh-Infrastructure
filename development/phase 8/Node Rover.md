@@ -1,7 +1,12 @@
 // ===========================================================================
 //  PHASE 8  -  AUTONOMOUS RESCUE ROVER  -  NODE R (Rover)
-//  ESP32 + LoRa SX1278 (433 MHz) + 0.96" SSD1306 OLED + NEO-M8N GPS
-//  + L298N/TB6612 motor driver (2WD/4WD) + HC-SR04 ultrasonic + SOS button
+//  ESP32-S3 + LoRa SX1278 (433 MHz) + 0.96" SSD1306 OLED + NEO-M8N GPS
+//  + L298N driving FOUR 6V 100RPM BO gear motors + HC-SR04 ultrasonic on a
+//  panning servo + SOS button / E-STOP
+//
+//  BOARD: "ESP32S3 Dev Module".  THIS IS NOT THE SAME CHIP AS NODES A/B/C -
+//  they stay on the classic ESP32. The pin map below is completely different
+//  and the two are NOT interchangeable; see the pin section for why.
 //
 //  Complete standalone sketch - paste the whole file into the Arduino IDE.
 //
@@ -102,21 +107,41 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define PROTO_VERSION   1
 
 // --------------------------------- pins -----------------------------------
-#define LORA_SCK       18
-#define LORA_MISO      19
-#define LORA_MOSI      23
-#define LORA_SS         5
+// ESP32-S3 PIN MAP.  Most of the classic ESP32 numbers used by nodes A/B/C
+// are either absent or unusable on this chip:
+//   GPIO 22, 23, 24, 25  DO NOT EXIST on the S3.
+//   GPIO 26..32          are the SPI bus to the flash/PSRAM. Never usable.
+//   GPIO 33..37          are used by the OCTAL PSRAM fitted to N8R8/N16R8
+//                        modules (most DevKitC-1 boards). Avoided.
+//   GPIO 19, 20          are USB D-/D+ for the native USB port.
+//   GPIO 43, 44          are UART0 - the serial monitor.
+//   GPIO 0, 3, 45, 46    are strapping pins - something pulling one of these
+//                        at power-up changes how the chip boots.
+//   GPIO 38 / 48         drive the onboard RGB LED (which one depends on the
+//                        board revision), so both are left alone.
+// There are also NO input-only pins on the S3 - every pin below can be an
+// output - and ADC1 is GPIO 1..10 ONLY, which is where the analog inputs are.
+// Everything below comes from the safe set: 1..18, 21, 39..42, 47.
+// NOTE: 39..42 are also the JTAG pins. Fine as GPIO; only matters if you want
+// hardware JTAG debugging, which this project does not use.
+
+// ---- LoRa SX1278  (SPI2 / "FSPI" - these are the S3 defaults) ------------
+#define LORA_SCK       12
+#define LORA_MISO      13
+#define LORA_MOSI      11
+#define LORA_SS        10
 #define LORA_RST       14
-#define LORA_DIO0      26
+#define LORA_DIO0      21
 
-#define I2C_SDA        21
-#define I2C_SCL        22
+// ---- OLED  (I2C - the S3 defaults) --------------------------------------
+#define I2C_SDA         8
+#define I2C_SCL         9
 
-#define PIN_SOS_BUTTON  4    // also doubles as a physical motor E-STOP here
-#define PIN_ENTROPY    34    // ADC1, input-only, floats -> good random seed
+#define PIN_SOS_BUTTON 15    // also doubles as a physical motor E-STOP here
+#define PIN_ENTROPY     1    // ADC1_CH0, left unwired so it floats -> seed
 
-#define GPS_RX_PIN     16    // ESP32 RX2  <- GPS TX
-#define GPS_TX_PIN     17    // ESP32 TX2  -> GPS RX
+#define GPS_RX_PIN     17    // Serial2 RX  <- GPS TX
+#define GPS_TX_PIN     18    // Serial2 TX  -> GPS RX
 #define GPS_BAUD     9600
 
 // ---- motors (H-bridge, e.g. L298N / TB6612) -------------------------------
@@ -125,22 +150,40 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 // version has a different LEDC API. Full speed, direction-only, like the
 // plan's "fwd/back/left/right/stop" spec. If you want variable speed later,
 // these are already separate pins - add ledcAttach/ledcWrite to them.
-#define PIN_LEFT_IN1   27
-#define PIN_LEFT_IN2   25
-#define PIN_LEFT_EN    13
-#define PIN_RIGHT_IN1  33
-#define PIN_RIGHT_IN2  32
-#define PIN_RIGHT_EN    2    // shares the boot-strapping/onboard-LED pin on
-                             // many boards; harmless as an output post-boot,
-                             // the LED will just blink with the right motor
+// FOUR motors on a TWO-channel L298N: they are wired as two PAIRS in
+// parallel - both left motors on OUT1/OUT2, both right motors on OUT3/OUT4.
+// Each channel therefore carries two motors; see the README for the current
+// budget and why the L298N wants a heatsink for this.
+// REMOVE THE ENA/ENB JUMPERS on the L298N board, or these two pins do nothing
+// and the motors are permanently enabled.
+#define PIN_LEFT_IN1    5    // -> L298N IN1
+#define PIN_LEFT_IN2    6    // -> L298N IN2
+#define PIN_LEFT_EN     4    // -> L298N ENA
+#define PIN_RIGHT_IN1   7    // -> L298N IN3
+#define PIN_RIGHT_IN2  16    // -> L298N IN4
+#define PIN_RIGHT_EN   42    // -> L298N ENB
 
 // ---- ultrasonic (HC-SR04) --------------------------------------------------
-#define PIN_TRIG       15
-#define PIN_ECHO       35    // INPUT ONLY pin - and needs a voltage divider,
-                             // see the header note above
+#define PIN_TRIG       40
+#define PIN_ECHO       41    // the sensor drives this at 5V and the S3 is NOT
+                             // 5V tolerant - it MUST go through a divider
+                             // (1k to ECHO, 2k to GND). TRIG is an output, so
+                             // it connects directly.
+
+// ---- servo panning the ultrasonic (SG90 / MG90S) -------------------------
+// AUTO used to pick its escape direction at random. With the sensor on a
+// servo it can look both ways first and turn toward whichever side is
+// actually clearer. Driven straight off LEDC - no servo library needed.
+#define PIN_SERVO      39
+#define SERVO_LEFT_DEG    150
+#define SERVO_CENTER_DEG   90
+#define SERVO_RIGHT_DEG    30
+#define SERVO_SETTLE_MS   260    // time for the horn to actually arrive
+#define SERVO_PWM_HZ       50
+#define SERVO_PWM_BITS     16
 
 // ---- battery sense (optional) ---------------------------------------------
-#define PIN_BATTERY_ADC     36            // ADC1_CH0 / "VP", input-only
+#define PIN_BATTERY_ADC     2             // ADC1_CH1 (ADC1 = GPIO 1..10)
 #define BATTERY_ADC_VMIN   6.4f           // volts AT THE ADC PIN at "empty" -
 #define BATTERY_ADC_VMAX   8.4f           // and "full" - CALIBRATE FOR YOUR
                                           // OWN DIVIDER AND PACK. Defaults
@@ -238,6 +281,10 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define AUTO_TURN_MS_MAX        700UL
 #define ULTRASONIC_INTERVAL_MS  100UL // >= HC-SR04's ~60ms recommended gap
 #define ULTRASONIC_ECHO_TIMEOUT_MS 30UL  // no echo by then = "clear", not "unknown forever"
+// A sensor that never even raises ECHO is DISCONNECTED, not looking at an
+// empty room - an HC-SR04 with nothing in range still emits a ~38ms pulse.
+// After this many pings with no rising edge at all, AUTO stops driving.
+#define ULTRASONIC_FAULT_MISSES   20     // x ULTRASONIC_INTERVAL_MS = ~2 s
 #define ROVER_TELEMETRY_MS   10000UL
 #define ROVER_TELEMETRY_JITTER_MS 2000UL
 
@@ -1109,17 +1156,54 @@ void motorRight() {
 //  rising/falling edges are timestamped by an interrupt, so loop() is never
 //  waiting on the sensor.
 // ===========================================================================
+// ===========================================================================
+//  SERVO  -  pans the ultrasonic sensor left / centre / right
+//
+//  Driven straight off LEDC instead of pulling in a servo library: it is one
+//  50 Hz channel and the pulse width is the only thing that matters. Uses the
+//  pin-based ledcAttach/ledcWrite from Arduino-ESP32 core 3.x.
+// ===========================================================================
+bool servoOk  = false;
+int  servoDeg = SERVO_CENTER_DEG;
+
+void servoWrite(int deg) {
+  if (!servoOk) return;
+  if (deg < 0) deg = 0; else if (deg > 180) deg = 180;
+  servoDeg = deg;
+  // 500us (0 deg) .. 2500us (180 deg) inside the 20000us frame
+  uint32_t us   = 500UL + ((uint32_t)deg * 2000UL) / 180UL;
+  uint32_t full = (1UL << SERVO_PWM_BITS) - 1UL;
+  ledcWrite(PIN_SERVO, (uint32_t)(((uint64_t)us * full) / 20000ULL));
+}
+
+void servoInit() {
+  servoOk = ledcAttach(PIN_SERVO, SERVO_PWM_HZ, SERVO_PWM_BITS);
+  if (!servoOk) {
+    Serial.println("[servo] ledcAttach FAILED - AUTO will fall back to random turns");
+    return;
+  }
+  servoWrite(SERVO_CENTER_DEG);
+  Serial.printf("[servo] on GPIO%d, centred at %d deg\n", PIN_SERVO, SERVO_CENTER_DEG);
+}
+
 volatile uint32_t echoRiseUs = 0;
 volatile uint32_t echoFallUs = 0;
 volatile bool     echoNewReading = false;
+volatile bool     echoSawRise    = false;   // proves the sensor is alive
 
 int      ultrasonicCm = -1;          // -1 = unknown / nothing in range
+uint8_t  ultrasonicMisses = 0;       // consecutive pings with NO rising edge
+
+// True when the sensor has stopped answering entirely. Distinct from "-1",
+// which only means nothing was in range - see ULTRASONIC_FAULT_MISSES.
+bool ultrasonicFaulted() { return ultrasonicMisses >= ULTRASONIC_FAULT_MISSES; }
 uint32_t ultrasonicLastTrigMs = 0;
 bool     ultrasonicWaiting = false;
 
 void IRAM_ATTR echoIsr() {
   if (digitalRead(PIN_ECHO) == HIGH) {
-    echoRiseUs = micros();
+    echoRiseUs  = micros();
+    echoSawRise = true;
   } else {
     echoFallUs = micros();
     echoNewReading = true;
@@ -1134,6 +1218,13 @@ void ultrasonicInit() {
 }
 
 void ultrasonicTrigger() {
+  // Drop anything the ISR captured since the last ping. Without this a late
+  // echo from the PREVIOUS ping is consumed as if it belonged to this one.
+  noInterrupts();
+  echoNewReading = false;
+  echoSawRise    = false;
+  interrupts();
+
   // The 3 digitalWrite()s + two delayMicroseconds() below cost ~12us total -
   // see the section header for why that is not the blocking-call problem.
   digitalWrite(PIN_TRIG, LOW);
@@ -1158,9 +1249,17 @@ void ultrasonicService() {
       interrupts();
       uint32_t widthUs = fall - rise;          // wraps harmlessly at ~71 min
       ultrasonicCm = (int)(widthUs / 58UL);    // ~58us per cm, round trip
+      ultrasonicMisses = 0;
       ultrasonicWaiting = false;
     } else if (now - ultrasonicLastTrigMs > ULTRASONIC_ECHO_TIMEOUT_MS) {
-      ultrasonicCm = -1;                       // nothing came back - clear
+      ultrasonicCm = -1;                       // nothing in range
+      // ECHO never even went high -> the sensor is not answering at all.
+      // A working HC-SR04 with an empty room still pulses ECHO, so this
+      // separates "nothing in front of me" from "nothing plugged in".
+      bool sawRise;
+      noInterrupts(); sawRise = echoSawRise; interrupts();
+      if (sawRise) ultrasonicMisses = 0;
+      else if (ultrasonicMisses < 255) ultrasonicMisses++;
       ultrasonicWaiting = false;
     }
     return;
@@ -1177,14 +1276,34 @@ uint8_t  roverMode = ROVER_MANUAL;     // safe default - see header note
 
 // ---- manual (dashboard/serial) driving, dead-man-switch pulsed -----------
 bool     manualDriving = false;
-uint32_t manualDriveUntilMs = 0;
+// Phase 1 rule: never store a timestamp in the FUTURE and compare with >.
+// This used to be manualDriveUntilMs = millis() + MANUAL_PULSE_MS, which is
+// the same unsigned-wrap pattern the Interval helper exists to avoid.
+uint32_t manualDriveStartMs = 0;
+
+// Set whenever the drive pins are energised, so AUTO does not rewrite all six
+// of them on every single loop pass.
+bool     motorsMoving = false;
 
 // ---- AUTO bump-turn state machine -----------------------------------------
 #define RA_FORWARD 0
 #define RA_BACK    1
-#define RA_TURN    2
+#define RA_SCAN    2
+#define RA_TURN    3
 uint8_t  autoState = RA_FORWARD;
 uint32_t autoStateSince = 0;
+
+// Latched when the turn STARTS. This used to be recomputed with random()
+// on every loop pass, which meant the turn ended as soon as the elapsed time
+// beat any single low draw - so it always turned for about the minimum and
+// the "random turn" was not random at all.
+uint32_t autoTurnMs    = 0;
+bool     autoTurnRight = false;
+
+// left/right look-around before choosing an escape direction
+uint8_t  scanStep    = 0;
+int      scanLeftCm  = -1;
+int      scanRightCm = -1;
 
 const char *roverModeName(uint8_t m) {
   if (m == ROVER_AUTO)  return "AUTO";
@@ -1197,6 +1316,7 @@ const char *roverModeName(uint8_t m) {
 void roverEmergencyStop(const char *why) {
   motorStop();
   manualDriving = false;
+  motorsMoving  = false;
   Serial.printf("[rover] STOP (%s)\n", why);
 }
 
@@ -1226,12 +1346,12 @@ void roverManualDrive(const char *verb) {
   else return;
 
   manualDriving = true;
-  manualDriveUntilMs = millis() + MANUAL_PULSE_MS;
+  manualDriveStartMs = millis();
   Serial.printf("[rover] drive %s (pulse %lums)\n", verb, (unsigned long)MANUAL_PULSE_MS);
 }
 
 void manualDriveService() {
-  if (manualDriving && millis() > manualDriveUntilMs) {
+  if (manualDriving && millis() - manualDriveStartMs >= MANUAL_PULSE_MS) {
     motorStop();
     manualDriving = false;
   }
@@ -1241,10 +1361,25 @@ void manualDriveService() {
 // AUTO_OBSTACLE_CM, then back off and turn a random way, then resume.
 void autoService() {
   uint32_t now = millis();
+
+  // FAIL SAFE. A sensor that is not answering must not read as "path clear".
+  // ultrasonicCm == -1 legitimately means "nothing within range", so it can
+  // NOT be used for this - ultrasonicFaulted() is the real test.
+  if (ultrasonicFaulted()) {
+    if (motorsMoving) { motorStop(); motorsMoving = false; }
+    static uint32_t lastMoan = 0;
+    if (now - lastMoan > 5000UL) {
+      lastMoan = now;
+      Serial.println("[rover] AUTO HALTED - ultrasonic not responding. "
+                     "Check the ECHO divider and the sensor 5V.");
+    }
+    return;
+  }
+
   bool obstacle = (ultrasonicCm > 0 && ultrasonicCm < AUTO_OBSTACLE_CM);
 
   if (autoState == RA_FORWARD) {
-    motorForward();
+    if (!motorsMoving) { motorForward(); motorsMoving = true; }
     if (obstacle) {
       Serial.printf("[rover] obstacle at %dcm - backing off\n", ultrasonicCm);
       motorBackward();
@@ -1253,17 +1388,42 @@ void autoService() {
     }
   } else if (autoState == RA_BACK) {
     if (now - autoStateSince > AUTO_BACK_MS) {
-      bool turnRight = (random(0, 2) == 0);
-      if (turnRight) motorRight(); else motorLeft();
-      Serial.printf("[rover] turning %s\n", turnRight ? "right" : "left");
+      motorStop();
+      motorsMoving = false;
+      scanStep = 0; scanLeftCm = -1; scanRightCm = -1;
+      servoWrite(SERVO_LEFT_DEG);          // look left first
+      autoState = RA_SCAN;
+      autoStateSince = now;
+    }
+  } else if (autoState == RA_SCAN) {
+    // Stand still, look left, look right, then turn toward the clearer side.
+    if (now - autoStateSince < SERVO_SETTLE_MS) return;
+    if (scanStep == 0) {
+      scanLeftCm = ultrasonicCm;
+      servoWrite(SERVO_RIGHT_DEG);
+      scanStep = 1;
+      autoStateSince = now;
+    } else {
+      scanRightCm = ultrasonicCm;
+      servoWrite(SERVO_CENTER_DEG);        // face forward again to drive
+      // -1 means nothing came back, i.e. the CLEAREST reading there is.
+      int l = (scanLeftCm  < 0) ? 9999 : scanLeftCm;
+      int r = (scanRightCm < 0) ? 9999 : scanRightCm;
+      autoTurnRight = (r != l) ? (r > l) : (random(0, 2) == 0);
+      autoTurnMs = AUTO_TURN_MS_MIN +
+                   (uint32_t)random(0, (long)(AUTO_TURN_MS_MAX - AUTO_TURN_MS_MIN));
+      if (autoTurnRight) motorRight(); else motorLeft();
+      motorsMoving = true;
+      Serial.printf("[rover] scan L=%dcm R=%dcm -> turning %s for %lums\n",
+                    scanLeftCm, scanRightCm,
+                    autoTurnRight ? "right" : "left", (unsigned long)autoTurnMs);
       autoState = RA_TURN;
       autoStateSince = now;
     }
   } else { // RA_TURN
-    uint32_t turnMs = AUTO_TURN_MS_MIN +
-                      (uint32_t)random(0, AUTO_TURN_MS_MAX - AUTO_TURN_MS_MIN);
-    if (now - autoStateSince > turnMs) {
+    if (now - autoStateSince > autoTurnMs) {
       motorForward();
+      motorsMoving = true;
       autoState = RA_FORWARD;
       autoStateSince = now;
     }
@@ -2244,11 +2404,29 @@ void handleSerial() {
     roverManualDrive("STOP");
 
   } else if (c == 'u') {
-    Serial.printf("[rover] ultrasonic: %dcm\n", ultrasonicCm);
+    Serial.printf("[rover] ultrasonic: %dcm  (misses=%u%s)\n",
+                  ultrasonicCm, (unsigned)ultrasonicMisses,
+                  ultrasonicFaulted() ? "  <<< SENSOR NOT RESPONDING" : "");
+
+  } else if (c == 'w') {
+    // Servo sweep test. Watch the sensor head physically move; if it does
+    // not, AUTO cannot choose a turn direction and falls back to random.
+    if (!servoOk) {
+      Serial.println("[servo] not attached");
+    } else {
+      static uint8_t p = 0;
+      p = (uint8_t)((p + 1) % 3);
+      int d = (p == 0) ? SERVO_CENTER_DEG
+            : (p == 1) ? SERVO_LEFT_DEG : SERVO_RIGHT_DEG;
+      servoWrite(d);
+      Serial.printf("[servo] -> %d deg\n", d);
+    }
 
   } else if (c == 'h' || c == '?') {
     Serial.println("commands: n=neighbours r=routes g=GPS s=stats  a|b|c=send msg to that node");
     Serial.println("          t=toggle repeat send  p=next OLED page  x=bad frame");
+    Serial.println("  ROVER:  m=cycle mode  i/k/j/l=fwd/back/left/right  o=stop");
+    Serial.println("          u=ultrasonic reading   w=sweep the servo");
     Serial.println("  SOS/E-STOP:  S=trigger SOS  C=clear alert  (button always E-STOPs)");
     Serial.println("  report 1=VictimFound 2=Medical 3=Blocked 4=Danger");
     Serial.println("  status 5=Available 6=Searching 7=NeedAssist 8=Emergency");
@@ -2267,8 +2445,9 @@ void setup() {
   delay(200);
 
   pinMode(PIN_SOS_BUTTON, INPUT_PULLUP);
-  motorInit();
-  ultrasonicInit();
+  motorInit();          // FIRST - drives every motor pin low before anything
+  ultrasonicInit();     // else runs, so a reset cannot leave the wheels on
+  servoInit();
 
   randomSeed(((uint32_t)analogRead(PIN_ENTROPY) << 16) ^ micros());
 
