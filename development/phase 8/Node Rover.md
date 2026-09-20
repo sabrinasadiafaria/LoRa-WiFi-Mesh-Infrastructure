@@ -20,21 +20,32 @@
 //  portal removed (the Pi dashboard is the remote control, not a phone on
 //  the rover itself) and a motor + ultrasonic layer added.
 //
+//  Phase 9 adds a fourth mode AUTO_GPS (CMD:GOTO,<lat>,<lon>) and the
+//  GOCLR verb. AUTO_GPS replaces the random turn direction in AUTO with
+//  "turn toward the target's bearing". See autoGpsService().
+//
 //  THREE MODES (default on boot: MANUAL - it must not drive away on its own
 //  the moment it is powered on):
-//    MANUAL  drive commands come from the Pi dashboard (or serial, on the
-//            bench) as CMD:FWD/BACK/LEFT/RIGHT/STOP. Every drive command is
-//            a bounded PULSE (MANUAL_PULSE_MS) - if the dashboard button is
-//            released, or the link drops, the rover coasts to a stop within
-//            one pulse on its own. Nothing here can make it "run away".
-//    AUTO    non-blocking bump-turn: drive forward; if the ultrasonic sensor
-//            reports something closer than AUTO_OBSTACLE_CM, back up, turn
-//            a random direction, resume.
-//    RELAY   motors held off, obstacle scanning off. The rover is driven
-//            into position in MANUAL, then switched to RELAY to sit still
-//            and be a pure LoRa relay - the mesh's forwarding logic already
-//            does the rest, because every mesh node forwards regardless of
-//            mode; RELAY just stops this one from also being a moving robot.
+//    MANUAL     drive commands come from the Pi dashboard (or serial, on the
+//               bench) as CMD:FWD/BACK/LEFT/RIGHT/STOP. Every drive command is
+//               a bounded PULSE (MANUAL_PULSE_MS) - if the dashboard button is
+//               released, or the link drops, the rover coasts to a stop within
+//               one pulse on its own. Nothing here can make it "run away".
+//    AUTO       non-blocking bump-turn: drive forward; if the ultrasonic sensor
+//               reports something closer than AUTO_OBSTACLE_CM, back up, turn
+//               a random direction, resume.
+//    AUTO_GPS   drive to a target GPS point received from the Pi as
+//               CMD:GOTO,<lat_micro>,<lon_micro>. Same bump-turn obstacle
+//               avoidance as AUTO, but the "random direction" is replaced by
+//               "turn toward the target's bearing". Entered only by the GOTO
+//               command - 'm' still cycles MANUAL -> AUTO -> RELAY. Cleared
+//               by GOCLR, by arrival within AUTO_GPS_ARRIVE_M, by a STOP, or
+//               by the SOS button.
+//    RELAY      motors held off, obstacle scanning off. The rover is driven
+//               into position in MANUAL, then switched to RELAY to sit still
+//               and be a pure LoRa relay - the mesh's forwarding logic already
+//               does the rest, because every mesh node forwards regardless of
+//               mode; RELAY just stops this one from also being a moving robot.
 //  Any received command, mode switch, or the SOS button is an immediate
 //  motor cut - see roverEmergencyStop().
 //
@@ -83,6 +94,7 @@
 //    m           cycle mode MANUAL -> AUTO -> RELAY -> MANUAL
 //    i k j l o   drive: forward / back / left / right / stop (MANUAL only,
 //                same bounded pulse as a dashboard command)
+//    G           drop the current GOTO target (same as the dashboard GOCLR)
 //    u           print the current ultrasonic reading
 //  Everything else (n r g s a|b|c t p S C 1-4 5-8 v N R T h) is unchanged.
 // ===========================================================================
@@ -94,6 +106,13 @@
 #include <Adafruit_SSD1306.h>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
+#include <math.h>
+
+// Newer esp32 / esp32-s3 cores guard M_PI behind _USE_MATH_DEFINES. Define
+// it explicitly here so the AUTO_GPS bearing code compiles on either.
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 #define SCREEN_WIDTH  128
 #define SCREEN_HEIGHT  64
@@ -271,6 +290,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define ROVER_MANUAL  0
 #define ROVER_AUTO    1
 #define ROVER_RELAY   2
+#define ROVER_AUTOG   3   // entered only via CMD:GOTO from the Pi
 
 #define MANUAL_PULSE_MS       600UL   // one drive command moves it this long,
                                       // then it auto-stops - see the header
@@ -279,6 +299,21 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define AUTO_BACK_MS            500UL
 #define AUTO_TURN_MS_MIN        350UL
 #define AUTO_TURN_MS_MAX        700UL
+// ---- AUTO_GPS (drive toward a GOTO target) --------------------------------
+// Turn toward the target when the heading error exceeds TURN_THRESHOLD_DEG.
+// We turn in place for a bounded time proportional to the error - never
+// over-correct past the target - then re-aim. Re-aiming every REAIM_MS in
+// FORWARD catches drift. Obstacle avoidance falls back to the same back-off
+// dance AUTO uses, then resumes re-aiming instead of random-turning.
+// ARRIVE_M is the "close enough" radius. FIX_TIMEOUT_MS is how long we wait
+// without a GPS fix before falling back to random AUTO; when the fix
+// returns we resume aiming.
+#define AUTO_GPS_TURN_THRESHOLD_DEG  30
+#define AUTO_GPS_TURN_MS_PER_DEG     14UL   // ~0.5s for a 90deg turn at our wheelbase
+#define AUTO_GPS_MAX_TURN_MS        1200UL
+#define AUTO_GPS_REAIM_MS           2500UL
+#define AUTO_GPS_ARRIVE_M              2    // arrived, stop
+#define AUTO_GPS_FIX_TIMEOUT_MS     8000UL  // without fix -> random AUTO until fix recovers
 #define ULTRASONIC_INTERVAL_MS  100UL // >= HC-SR04's ~60ms recommended gap
 #define ULTRASONIC_ECHO_TIMEOUT_MS 30UL  // no echo by then = "clear", not "unknown forever"
 // A sensor that never even raises ECHO is DISCONNECTED, not looking at an
@@ -1303,11 +1338,43 @@ bool     autoTurnRight = false;
 // left/right look-around before choosing an escape direction
 uint8_t  scanStep    = 0;
 int      scanLeftCm  = -1;
+int      scanCenterCm = -1;
 int      scanRightCm = -1;
+
+// ---- AUTO_GPS target + state -----------------------------------------------
+// `roverTarget` is set by CMD:GOTO from the Pi and cleared by arrival,
+// GOCLR, STOP, or mode change. Stored as integer microdegrees to avoid
+// float formatting in the packet path (the rover has no malloc, no FPU).
+bool     targetSet         = false;
+int32_t  targetLatMicro    = 0;
+int32_t  targetLonMicro    = 0;
+// Last computed bearing to target (degrees, 0..360, north=0) and signed
+// heading error (-180..180). Both go out in ROVER: telemetry so the Pi
+// can render a compass arrow and "X m away" on the dashboard.
+double   lastBearingDeg    = 0.0;
+double   lastHeadingErrDeg = 0.0;
+double   lastDistMeters    = -1.0;
+// When was the GPS fix last fresh? Used to fall back to plain AUTO if the
+// rover's GPS module loses the sky view mid-route.
+uint32_t lastFixSeenMs     = 0;
+// When did we last recompute bearing? Throttle the atan2 + haversine to
+// avoid burning CPU on the loop iteration.
+uint32_t lastAimMs         = 0;
+
+#define RG_AIM    0   // re-aim: turn toward target if error > threshold
+#define RG_FWD    1   // drive forward; re-aim periodically
+#define RG_BACK   2   // backing off an obstacle
+#define RG_SCAN   3   // looking left/right after a back-off
+#define RG_TURN   4   // in-place turn (heading correction)
+uint8_t  rgState = RG_AIM;
+uint32_t rgStateSince = 0;
+uint32_t rgTurnEndMs  = 0;     // when the current in-place turn is done
+bool     rgTurningRight = false;
 
 const char *roverModeName(uint8_t m) {
   if (m == ROVER_AUTO)  return "AUTO";
   if (m == ROVER_RELAY) return "RELAY";
+  if (m == ROVER_AUTOG) return "AUTO_GPS";
   return "MANUAL";
 }
 
@@ -1326,6 +1393,14 @@ void roverSetMode(uint8_t newMode, const char *why) {
   roverMode = newMode;
   autoState = RA_FORWARD;
   autoStateSince = millis();
+  // Leaving AUTO_GPS clears the target. The next GOTO has to re-set it.
+  // This is what you want: switching to MANUAL or RELAY from AUTOG means
+  // "the operator is taking over", and the half-stale target sitting in
+  // RAM would otherwise re-arm the auto-drive if AUTO_GPS got re-entered
+  // by accident (e.g. through a fresh GOTO that we then ignored).
+  if (newMode != ROVER_AUTOG) targetSet = false;
+  rgState = RG_AIM;
+  rgStateSince = millis();
   Serial.printf("[rover] mode -> %s (%s)\n", roverModeName(roverMode), why);
 }
 
@@ -1333,16 +1408,33 @@ void roverSetMode(uint8_t newMode, const char *why) {
 // the entire safety model for remote driving - no command, or a dropped
 // link, and the rover stops on its own within MANUAL_PULSE_MS.
 void roverManualDrive(const char *verb) {
+  // STOP from the dashboard is also the "abort the GOTO" button - if the
+  // commander stops the rover mid-route they almost always mean "stop
+  // everything, the target is no longer relevant".
+  if (!strcmp(verb, "STOP") && targetSet) {
+    targetSet = false;
+    Serial.println("[rover] GOTO target cleared by STOP");
+  }
   if (roverMode != ROVER_MANUAL) {
-    Serial.printf("[rover] drive command ignored - mode is %s, not MANUAL\n",
-                  roverModeName(roverMode));
-    return;
+    // A drive verb while in AUTO/AUTOG/RELAY: switch into MANUAL first
+    // (the dashboard's d-pad is the canonical "I am driving now" signal).
+    if (!strcmp(verb, "FWD") || !strcmp(verb, "BACK") ||
+        !strcmp(verb, "LEFT") || !strcmp(verb, "RIGHT")) {
+      roverSetMode(ROVER_MANUAL, "manual drive verb");
+    } else if (!strcmp(verb, "STOP")) {
+      roverSetMode(ROVER_MANUAL, "STOP");
+      roverEmergencyStop("STOP command");
+      return;
+    } else {
+      Serial.printf("[rover] drive command ignored - mode is %s, not MANUAL\n",
+                    roverModeName(roverMode));
+      return;
+    }
   }
   if      (!strcmp(verb, "FWD"))   motorForward();
   else if (!strcmp(verb, "BACK"))  motorBackward();
   else if (!strcmp(verb, "LEFT"))  motorLeft();
   else if (!strcmp(verb, "RIGHT")) motorRight();
-  else if (!strcmp(verb, "STOP"))  { roverEmergencyStop("STOP command"); return; }
   else return;
 
   manualDriving = true;
@@ -1430,14 +1522,297 @@ void autoService() {
   }
 }
 
+// ===========================================================================
+//  AUTO_GPS  -  drive to a GPS target received from the Pi via CMD:GOTO.
+//
+//  State machine (RG_AIM / RG_FWD / RG_BACK / RG_SCAN / RG_TURN):
+//   AIM    - if heading error > threshold, start an in-place TURN proportional
+//            to the error, then re-aim. If error small, drive forward.
+//   FWD    - drive forward, re-aim every AUTO_GPS_REAIM_MS to correct drift.
+//            If obstacle detected, BACK.
+//   BACK   - back off for AUTO_BACK_MS, then SCAN to choose a direction.
+//   SCAN   - look left/right (same as plain AUTO), then turn toward target.
+//   TURN   - in-place turn; bounded by rgTurnEndMs. Then AIM again.
+//
+//  No GPS fix for AUTO_GPS_FIX_TIMEOUT_MS -> fall back to plain random AUTO
+//  (not bumper-to-wall driving; just to keep it from going in circles while
+//  it waits for the sky view). Fix recovers -> back to AUTO_GPS.
+//
+//  All non-blocking. Same watchdog responsibilities as every other loop path.
+// ===========================================================================
+static double wrapDeg360(double d) {
+  while (d < 0)   d += 360.0;
+  while (d >= 360) d -= 360.0;
+  return d;
+}
+static double wrapDeg180(double d) {
+  while (d >  180.0) d -= 360.0;
+  while (d < -180.0) d += 360.0;
+  return d;
+}
+
+// Bearing from (lat1, lon1) to (lat2, lon2), degrees, north=0, clockwise.
+// Standard initial-bearing formula; good to ~1deg for the rover's wheelbase
+// at SAR distances (<5 km), which is well within our TURN_THRESHOLD_DEG.
+static double bearingDeg(double lat1, double lon1, double lat2, double lon2) {
+  double phi1 = lat1 * (M_PI / 180.0);
+  double phi2 = lat2 * (M_PI / 180.0);
+  double dl   = (lon2 - lon1) * (M_PI / 180.0);
+  double y = sin(dl) * cos(phi2);
+  double x = cos(phi1) * sin(phi2) - sin(phi1) * cos(phi2) * cos(dl);
+  double b = atan2(y, x) * (180.0 / M_PI);
+  return wrapDeg360(b);
+}
+
+// Flat-earth distance in metres between two WGS84 points. Adequate for SAR
+// (<5 km), and avoids the haversine sqrt that costs us ~150 cycles per call.
+// 111 320 m per degree of latitude is the standard approximate.
+static double distanceMeters(double lat1, double lon1, double lat2, double lon2) {
+  const double mPerDegLat = 111320.0;
+  double meanLat = (lat1 + lat2) * 0.5 * (M_PI / 180.0);
+  double dLat = (lat2 - lat1) * mPerDegLat;
+  double dLon = (lon2 - lon1) * mPerDegLat * cos(meanLat);
+  return sqrt(dLat * dLat + dLon * dLon);
+}
+
+// "Where am I headed right now" - very rough, we have no compass. We fake a
+// heading from consecutive GPS fixes; if we don't have at least two fresh
+// fixes we return NaN and the caller falls back to "no fix". This is fine
+// for our use case (drive forward; turn if error) - we don't need precision,
+// we need it to not run into the wall.
+double prevLat = 0.0, prevLon = 0.0;
+uint32_t prevFixMs = 0;
+bool prevFixValid = false;
+static double currentHeadingDeg() {
+  double lat, lon; uint32_t ageMs;
+  if (locBest(lat, lon, ageMs) == LOC_NONE) return NAN;
+  uint32_t now = millis();
+  if (!prevFixValid || (now - prevFixMs) > 3000UL) {
+    prevLat = lat; prevLon = lon; prevFixMs = now; prevFixValid = true;
+    return NAN;
+  }
+  if (ageMs > 2000UL) return NAN;
+  // movement smaller than ~1m => treat as stationary
+  if (fabs(lat - prevLat) < 1e-6 && fabs(lon - prevLon) < 1e-6) {
+    prevLat = lat; prevLon = lon; prevFixMs = now;
+    return NAN;
+  }
+  double h = bearingDeg(prevLat, prevLon, lat, lon);
+  prevLat = lat; prevLon = lon; prevFixMs = now;
+  return h;
+}
+
+// Recompute bearing, distance, signed heading error against the target.
+// Returns false if there is no target or no GPS fix.
+static bool autoGpsAim() {
+  if (!targetSet) return false;
+  double lat, lon; uint32_t ageMs;
+  if (locBest(lat, lon, ageMs) == LOC_NONE) return false;
+  double tLat = targetLatMicro / 1e6;
+  double tLon = targetLonMicro / 1e6;
+  lastDistMeters    = distanceMeters(lat, lon, tLat, tLon);
+  lastBearingDeg    = bearingDeg(lat, lon, tLat, tLon);
+  double heading    = currentHeadingDeg();
+  if (isnan(heading)) {
+    // No useful motion yet - assume we start pointed at the target. The first
+    // real fix after this will give us a real heading.
+    lastHeadingErrDeg = 0.0;
+  } else {
+    lastHeadingErrDeg = wrapDeg180(lastBearingDeg - heading);
+  }
+  lastFixSeenMs = millis();
+  return true;
+}
+
+void autoGpsService() {
+  uint32_t now = millis();
+
+  // Same ultrasonic fail-safe as AUTO.
+  if (ultrasonicFaulted()) {
+    if (motorsMoving) { motorStop(); motorsMoving = false; }
+    static uint32_t lastMoan = 0;
+    if (now - lastMoan > 5000UL) {
+      lastMoan = now;
+      Serial.println("[rover] AUTO_GPS HALTED - ultrasonic not responding. "
+                     "Check the ECHO divider and the sensor 5V.");
+    }
+    return;
+  }
+
+  // No target set? Should not happen (we are only here via GOTO) - but be safe.
+  if (!targetSet) {
+    if (motorsMoving) { motorStop(); motorsMoving = false; }
+    return;
+  }
+
+  // No GPS fix for too long - degrade to plain AUTO so the rover keeps
+  // moving but doesn't go in circles. Resume AUTO_GPS the moment a fix
+  // arrives.
+  if (gpsHasFix) lastFixSeenMs = now;
+  bool haveFix = (now - lastFixSeenMs) < AUTO_GPS_FIX_TIMEOUT_MS;
+  if (!haveFix && rgState != RG_BACK && rgState != RG_SCAN && rgState != RG_TURN) {
+    Serial.println("[rover] no fix for 8s, falling back to plain AUTO");
+    autoService();
+    return;
+  }
+
+  // Recompute aim periodically. Throttled so atan2 + sqrt don't run every loop.
+  if (rgState == RG_AIM || rgState == RG_FWD) {
+    if (now - lastAimMs >= AUTO_GPS_REAIM_MS) {
+      lastAimMs = now;
+      bool ok = autoGpsAim();
+      if (ok && lastDistMeters < AUTO_GPS_ARRIVE_M) {
+        // ARRIVED. Drop target, stop motors, switch to RELAY so the rover
+        // becomes a stable mesh node at the destination.
+        Serial.printf("[rover] ARRIVED at target (%.6f,%.6f) - %.2f m. mode -> RELAY.\n",
+                      targetLatMicro / 1e6, targetLonMicro / 1e6, lastDistMeters);
+        targetSet = false;
+        roverSetMode(ROVER_RELAY, "GOTO arrived");
+        return;
+      }
+    }
+  }
+
+  bool obstacle = (ultrasonicCm > 0 && ultrasonicCm < AUTO_OBSTACLE_CM);
+
+  switch (rgState) {
+    case RG_AIM: {
+      // If the aim hasn't run yet (first entry, no fix), just go forward and
+      // let the next aim re-correct us.
+      if (lastAimMs == 0) {
+        if (!motorsMoving) { motorForward(); motorsMoving = true; }
+        rgState = RG_FWD;
+        rgStateSince = now;
+        break;
+      }
+      double err = lastHeadingErrDeg;
+      if (fabs(err) < AUTO_GPS_TURN_THRESHOLD_DEG) {
+        if (!motorsMoving) { motorForward(); motorsMoving = true; }
+        rgState = RG_FWD;
+        rgStateSince = now;
+      } else {
+        // In-place turn for a bounded time proportional to |err|. We never
+        // overshoot past 180 - if err=170 we go the short way around (-170).
+        uint32_t turnMs = (uint32_t)(fabs(err) * (double)AUTO_GPS_TURN_MS_PER_DEG);
+        if (turnMs < 100UL)  turnMs = 100UL;
+        if (turnMs > AUTO_GPS_MAX_TURN_MS) turnMs = AUTO_GPS_MAX_TURN_MS;
+        rgTurningRight = (err > 0);  // positive err -> turn right
+        rgTurnEndMs = now + turnMs;
+        if (rgTurningRight) motorRight(); else motorLeft();
+        motorsMoving = true;
+        Serial.printf("[rover] aim err=%.0fdeg -> turn %s for %lums\n",
+                      err, rgTurningRight ? "right" : "left", (unsigned long)turnMs);
+        rgState = RG_TURN;
+        rgStateSince = now;
+      }
+      break;
+    }
+
+    case RG_FWD: {
+      if (!motorsMoving) { motorForward(); motorsMoving = true; }
+      // Periodic re-aim handled at the top of the function; the aim picks
+      // up the next state by leaving us in RG_FWD with a fresh lastAimMs.
+      if (now - rgStateSince >= AUTO_GPS_REAIM_MS) {
+        rgState = RG_AIM;
+        rgStateSince = now;
+      }
+      if (obstacle) {
+        Serial.printf("[rover] GOTO obstacle at %dcm - backing off\n", ultrasonicCm);
+        motorBackward();
+        rgState = RG_BACK;
+        rgStateSince = now;
+      }
+      break;
+    }
+
+    case RG_BACK: {
+      if (now - rgStateSince > AUTO_BACK_MS) {
+        motorStop();
+        motorsMoving = false;
+        scanStep = 0; scanLeftCm = -1; scanCenterCm = -1; scanRightCm = -1;
+        rgState = RG_SCAN;
+        rgStateSince = now;
+      }
+      break;
+    }
+
+    case RG_SCAN: {
+      // Reuse plain AUTO's look-around logic (it writes scanLeftCm /
+      // scanRightCm and steps scanStep). Run it for as long as RA_SCAN would.
+      if (now - rgStateSince < SERVO_SETTLE_MS) break;
+      if (scanStep == 0) {
+        servoSetAngle(SERVO_LEFT_DEG);
+        scanStep = 1;
+        rgStateSince = now;
+        break;
+      }
+      if (scanStep == 1 && now - rgStateSince >= SCAN_READ_DELAY_MS) {
+        scanLeftCm = ultrasonicCm;
+        servoSetAngle(SERVO_CENTER_DEG);
+        scanStep = 2;
+        rgStateSince = now;
+        break;
+      }
+      if (scanStep == 2 && now - rgStateSince >= SCAN_READ_DELAY_MS) {
+        scanCenterCm = ultrasonicCm;
+        servoSetAngle(SERVO_RIGHT_DEG);
+        scanStep = 3;
+        rgStateSince = now;
+        break;
+      }
+      if (scanStep == 3 && now - rgStateSince >= SCAN_READ_DELAY_MS) {
+        scanRightCm = ultrasonicCm;
+        servoSetAngle(SERVO_CENTER_DEG);
+        // Choose a direction with the most clearance - but instead of the
+        // plain AUTO rule (turn toward whichever side is clearer), compare
+        // each side to the bearing error and prefer the side that heads
+        // closer to the target.
+        double err = lastHeadingErrDeg;
+        bool targetOnRight = (err > 0);
+        int  errSideCm     = targetOnRight ? scanRightCm : scanLeftCm;
+        int  otherSideCm   = targetOnRight ? scanLeftCm  : scanRightCm;
+        bool obstacleOnErrSide = (errSideCm > 0 && errSideCm < AUTO_OBSTACLE_CM + 10);
+        rgTurningRight = obstacleOnErrSide ? !targetOnRight : targetOnRight;
+        uint32_t turnMs = (uint32_t)random((long)AUTO_TURN_MS_MIN, (long)AUTO_TURN_MS_MAX);
+        rgTurnEndMs = now + turnMs;
+        if (rgTurningRight) motorRight(); else motorLeft();
+        motorsMoving = true;
+        Serial.printf("[rover] GOTO scan L=%dcm C=%dcm R=%dcm -> turn %s for %lums\n",
+                      scanLeftCm, scanCenterCm, scanRightCm,
+                      rgTurningRight ? "right" : "left", (unsigned long)turnMs);
+        rgState = RG_TURN;
+        rgStateSince = now;
+      }
+      break;
+    }
+
+    case RG_TURN: {
+      if (now >= rgTurnEndMs) {
+        motorStop();
+        motorsMoving = false;
+        rgState = RG_AIM;
+        rgStateSince = now;
+        // Force the next AIM to recompute immediately so we don't drift on
+        // a stale bearing while still turning past where we wanted to stop.
+        lastAimMs = 0;
+      }
+      break;
+    }
+  }
+}
+
+
+
 // Dispatch by mode. Called every loop.
 void roverService() {
   ultrasonicService();
 
   if      (roverMode == ROVER_AUTO)   autoService();
+  else if (roverMode == ROVER_AUTOG)  autoGpsService();
   else if (roverMode == ROVER_MANUAL) manualDriveService();
   else                                motorStop();   // RELAY: hold position
 }
+
 
 // Raw ADC -> rough percentage. See the header note: CALIBRATE
 // BATTERY_ADC_VMIN/VMAX/DIVIDER for your actual pack and divider, or treat
@@ -1461,9 +1836,17 @@ void sendRoverTelemetry() {
                                 (uint32_t)random(0, ROVER_TELEMETRY_JITTER_MS));
 
   int batt = roverBatteryPercent();
-  char payload[48];
-  snprintf(payload, sizeof(payload), "%s,%d,%d",
-           roverModeName(roverMode), ultrasonicCm, batt);
+  // mode,obstacle_cm,battery_pct[,dist_m,heading_err_deg]
+  // dist_m = -1 means "no target set" (i.e. we're not in AUTO_GPS, or the
+  // target got cleared and we haven't picked a new one yet). heading_err_deg
+  // is -999 when there is no current GPS fix to compute it from. Old 3-field
+  // receivers (Pi mesh.py pre-Phase 9) gracefully degrade because we only
+  // check `len(f) >= 3` to read the first three fields.
+  int distM = (targetSet && lastDistMeters >= 0.0) ? (int)lastDistMeters : -1;
+  int hErr  = (isnan(lastHeadingErrDeg)) ? -999 : (int)lastHeadingErrDeg;
+  char payload[64];
+  snprintf(payload, sizeof(payload), "%s,%d,%d,%d,%d",
+           roverModeName(roverMode), ultrasonicCm, batt, distM, hErr);
 
   char frame[MAX_PACKET_LEN];
   if (pktBuild(frame, sizeof(frame), "ROVER", MY_ID, "*", nextMsgId(), MAX_HOPS, payload)
@@ -1979,7 +2362,7 @@ void handleOneRx() {
         sosTrigger("REMOTE");
       } else if (!strcmp(verb, "SOSCLR")) {
         sosClearAlert("command centre");
-      } else if (!strcmp(verb, "FWD") || !strcmp(verb, "BACK") ||
+      } else       if (!strcmp(verb, "FWD") || !strcmp(verb, "BACK") ||
                  !strcmp(verb, "LEFT") || !strcmp(verb, "RIGHT") ||
                  !strcmp(verb, "STOP")) {
         roverManualDrive(verb);
@@ -1987,6 +2370,33 @@ void handleOneRx() {
         if      (!strcmp(arg, "AUTO"))   roverSetMode(ROVER_AUTO, "command centre");
         else if (!strcmp(arg, "RELAY"))  roverSetMode(ROVER_RELAY, "command centre");
         else if (!strcmp(arg, "MANUAL")) roverSetMode(ROVER_MANUAL, "command centre");
+      } else if (!strcmp(verb, "GOTO")) {
+        // arg = "<lat_microdeg>,<lon_microdeg>" e.g. "23687750,90432100" for
+        // 23.687750, 90.432100. The Pi has already normalised and validated;
+        // we do a tight re-check because a bad payload here drives a robot.
+        long la = 0, lo = 0;
+        if (sscanf(arg, "%ld,%ld", &la, &lo) != 2 ||
+            la < -90000000L || la > 90000000L ||
+            lo < -180000000L || lo > 180000000L) {
+          Serial.printf("[rover] GOTO arg rejected: %s\n", arg);
+        } else {
+          targetLatMicro = (int32_t)la;
+          targetLonMicro = (int32_t)lo;
+          targetSet      = true;
+          rgState        = RG_AIM;
+          rgStateSince   = millis();
+          lastAimMs      = 0;     // force an aim on first service pass
+          roverSetMode(ROVER_AUTOG, "GOTO command");
+          Serial.printf("[rover] GOTO target set: lat=%.6f lon=%.6f\n",
+                        la / 1e6, lo / 1e6);
+        }
+      } else if (!strcmp(verb, "GOCLR")) {
+        if (targetSet) {
+          Serial.printf("[rover] GOTO cleared (was %.6f,%.6f)\n",
+                        targetLatMicro / 1e6, targetLonMicro / 1e6);
+        }
+        targetSet = false;
+        roverSetMode(ROVER_RELAY, "GOCLR command");
       }
     } else if (p.ttl > 0 && routeBestHop(p.dest)) {
       char frame[MAX_PACKET_LEN];
@@ -2176,26 +2586,43 @@ void drawPage4() {
   oledPush(l);
 }
 
-// ---- page 5: ROVER STATUS - new in Phase 8 --------------------------------
+// ---- page 5: ROVER STATUS - new in Phase 8, AUTO_GPS block added Phase 9 ---
 void drawPage5() {
   char l[5][26];
   snprintf(l[0], sizeof(l[0]), "-- ROVER --       6/6");
-  snprintf(l[1], sizeof(l[1]), "mode: %s", roverModeName(roverMode));
+  snprintf(l[1], sizeof(l[1]), "mode: %s%s",
+           roverModeName(roverMode),
+           (roverMode == ROVER_AUTOG && !targetSet) ? " (no tgt)" : "");
 
   if (ultrasonicCm < 0) snprintf(l[2], sizeof(l[2]), "range: clear/unknown");
   else                  snprintf(l[2], sizeof(l[2]), "range: %dcm%s",
                                  ultrasonicCm,
                                  (ultrasonicCm < AUTO_OBSTACLE_CM) ? " !" : "");
 
-  int batt = roverBatteryPercent();
-  if (batt < 0) snprintf(l[3], sizeof(l[3]), "batt: n/a (no divider?)");
-  else          snprintf(l[3], sizeof(l[3]), "batt: %d%%", batt);
+  if (roverMode == ROVER_AUTOG && targetSet) {
+    // AUTO_GPS replaces the battery line with target progress. Battery still
+    // visible on the dashboard; the OLED is the on-rover summary.
+    char errStr[16];
+    if (isnan(lastHeadingErrDeg)) snprintf(errStr, sizeof(errStr), "?");
+    else                          snprintf(errStr, sizeof(errStr), "%.0f", lastHeadingErrDeg);
+    snprintf(l[3], sizeof(l[3]), "dist: %.0fm err:%s",
+             lastDistMeters, errStr);
+    snprintf(l[4], sizeof(l[4]), "drive: %s",
+             (rgState == RG_FWD   ? "auto-fwd" :
+              rgState == RG_BACK  ? "auto-back" :
+              rgState == RG_TURN  ? (rgTurningRight ? "turn-R" : "turn-L") :
+              rgState == RG_SCAN  ? "scan" : "aim"));
+  } else {
+    int batt = roverBatteryPercent();
+    if (batt < 0) snprintf(l[3], sizeof(l[3]), "batt: n/a (no divider?)");
+    else          snprintf(l[3], sizeof(l[3]), "batt: %d%%", batt);
 
-  snprintf(l[4], sizeof(l[4]), "drive: %s",
-           manualDriving ? "ACTIVE" :
-           (roverMode == ROVER_AUTO ? (autoState == RA_FORWARD ? "auto-fwd" :
-                                       autoState == RA_BACK    ? "auto-back" : "auto-turn")
-                                     : "stopped"));
+    snprintf(l[4], sizeof(l[4]), "drive: %s",
+             manualDriving ? "ACTIVE" :
+             (roverMode == ROVER_AUTO ? (autoState == RA_FORWARD ? "auto-fwd" :
+                                         autoState == RA_BACK    ? "auto-back" : "auto-turn")
+                                       : "stopped"));
+  }
   oledPush(l);
 }
 
@@ -2391,6 +2818,18 @@ void handleSerial() {
   } else if (c == 'm') {
     uint8_t next = (uint8_t)((roverMode + 1) % 3);
     roverSetMode(next, "serial 'm'");
+
+  } else if (c == 'G') {
+    // Drop the GOTO target. Goes to RELAY (so the rover sits still and
+    // works as a mesh relay at wherever it happened to be).
+    if (targetSet) {
+      Serial.printf("[rover] GOTO cleared via serial (was %.6f,%.6f)\n",
+                    targetLatMicro / 1e6, targetLonMicro / 1e6);
+      targetSet = false;
+    } else {
+      Serial.println("[rover] no GOTO target to clear");
+    }
+    roverSetMode(ROVER_RELAY, "serial G");
 
   } else if (c == 'i') {
     roverManualDrive("FWD");

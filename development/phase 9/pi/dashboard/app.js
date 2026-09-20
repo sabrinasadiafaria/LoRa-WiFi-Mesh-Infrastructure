@@ -27,6 +27,24 @@ L.tileLayer('/tiles/{z}/{x}/{y}.png', {
   attribution: 'OSM (cached)', errorTileUrl: ''
 }).addTo(map);
 
+// Tap on the map to drop a GOTO pin (operator still has to press Go).
+// A previous pin is cleared so only one pin is visible at a time.
+let gotoPin = null;
+map.on('click', e => {
+  const { lat, lng } = e.latlng;
+  if (gotoPin) { map.removeLayer(gotoPin); gotoPin = null; }
+  gotoPin = L.marker([lat, lng], {
+    icon: L.divIcon({
+      className: 'goto-pin',
+      iconSize: [18, 18], iconAnchor: [9, 9],
+      html: '<div class="goto-pin-dot"></div>'
+    })
+  }).addTo(map);
+  if (typeof window.__roverGotoPrefill === 'function') {
+    window.__roverGotoPrefill(lat, lng);
+  }
+});
+
 const markers = {};   // id -> L.marker
 const trails  = {};   // id -> L.polyline
 const sosRing = {};   // id -> L.circle
@@ -337,11 +355,26 @@ function renderRover(roverList, now) {
   const warn = r.obstacle_cm >= 0 && r.obstacle_cm < 25;
   const range = r.obstacle_cm >= 0 ? `${r.obstacle_cm} cm` : 'clear';
   const batt = r.battery_pct >= 0 ? `${r.battery_pct}%` : 'n/a';
+  // GOTO target progress. dist_m == -1 means "no target" (rover not in
+  // AUTO_GPS, or just arrived, or GOCLR). heading_err == -999 means "no
+  // GPS fix yet so we can't compute it". Both are sentinels the rover
+  // sends so the dashboard can tell "we don't know" from "perfect aim".
+  let gotoPill = '';
+  if (r.dist_m != null && r.dist_m >= 0) {
+    const he = r.heading_err;
+    const arrow = (he == null || he <= -999)
+      ? '?'
+      : (Math.abs(he) < 30 ? '\u25B2' : (he > 0 ? '\u25B7' : '\u25C1'));
+    gotoPill = `<span class="pill ok">${arrow} ${r.dist_m} m</span>`;
+  } else if (r.mode === 'AUTO_GPS') {
+    gotoPill = `<span class="pill warn">acquiring GPS</span>`;
+  }
   pillsEl.innerHTML =
     `<span class="pill">id R</span>` +
     `<span class="pill ${warn ? 'warn' : 'ok'}">range ${range}</span>` +
     `<span class="pill">battery ${batt}</span>` +
-    `<span class="pill">seen ${fmtAge(now - r.ts)} ago</span>`;
+    `<span class="pill">seen ${fmtAge(now - r.ts)} ago</span>` +
+    gotoPill;
 
   // update mode-button highlight if it changed
   if (r.mode !== lastRoverMode) {
@@ -349,6 +382,13 @@ function renderRover(roverList, now) {
     document.querySelectorAll('#rover-fab .mode button').forEach(b => {
       b.classList.toggle('active', b.dataset.mode === r.mode);
     });
+    // If the rover just dropped AUTO_GPS (arrived, GOCLR'd, or fell back
+    // to RELAY), reset the GO inputs so the operator doesn't think the
+    // stale numbers are still live.
+    if (r.mode !== 'AUTO_GPS') {
+      const st = document.getElementById('goto-status');
+      if (st) st.textContent = 'no active target';
+    }
   }
 }
 
@@ -364,6 +404,73 @@ document.querySelectorAll('#rover-fab .dpad button').forEach(btn => {
 document.querySelectorAll('#rover-fab .mode button').forEach(btn => {
   btn.addEventListener('click', () => roverSetMode(btn.dataset.mode));
 });
+
+// ===================================================================
+// GOTO  -  send the rover to a target GPS coordinate.
+//   * type lat/lon into the inputs and press Go
+//   * or click on the map - it copies the clicked coords into the
+//     inputs and previews them so the operator can hit Go
+//   * "Cancel current target" sends GOCLR which makes the rover drop
+//     the route and sit as a RELAY node at wherever it happens to be
+// ===================================================================
+function sendRoverGoto(rawLat, rawLon) {
+  const st = document.getElementById('goto-status');
+  const la = parseFloat(rawLat);
+  const lo = parseFloat(rawLon);
+  if (!isFinite(la) || !isFinite(lo) ||
+      la < -90 || la > 90 || lo < -180 || lo > 180) {
+    if (st) st.textContent = 'invalid coords (lat -90..90, lon -180..180)';
+    return;
+  }
+  fetch('/api/command', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dest: 'R', verb: 'GOTO', arg: `${la},${lo}` })
+  }).then(r => r.json()).then(j => {
+    if (j.ok) {
+      if (st) st.textContent = `en route to ${la.toFixed(6)}, ${lo.toFixed(6)}`;
+    } else {
+      if (st) st.textContent = `error: ${j.error || 'unknown'}`;
+    }
+  }).catch(err => {
+    if (st) st.textContent = `network error: ${err}`;
+  });
+}
+
+document.getElementById('goto-go').addEventListener('click', () => {
+  sendRoverGoto(document.getElementById('goto-lat').value,
+                document.getElementById('goto-lon').value);
+});
+document.getElementById('goto-clr').addEventListener('click', () => {
+  fetch('/api/command', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dest: 'R', verb: 'GOCLR' })
+  }).then(r => r.json()).then(j => {
+    const st = document.getElementById('goto-status');
+    if (st) st.textContent = j.ok ? 'target cancelled' : `error: ${j.error || 'unknown'}`;
+  }).catch(err => {
+    const st = document.getElementById('goto-status');
+    if (st) st.textContent = `network error: ${err}`;
+  });
+});
+// Enter key on either input -> Go
+['goto-lat', 'goto-lon'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      sendRoverGoto(document.getElementById('goto-lat').value,
+                    document.getElementById('goto-lon').value);
+    }
+  });
+});
+// Map click -> drop a pin and prefill the inputs. The map is set up further
+// down in the file; this event hook attaches to it on first user click by
+// registering a one-shot listener bound to the same Leaflet map variable.
+window.__roverGotoPrefill = (lat, lng) => {
+  document.getElementById('goto-lat').value = lat.toFixed(6);
+  document.getElementById('goto-lon').value = lng.toFixed(6);
+  const st = document.getElementById('goto-status');
+  if (st) st.textContent = `pinned ${lat.toFixed(6)}, ${lng.toFixed(6)} - press Go`;
+};
 
 // ===================================================================
 // SSE - debounced refresh + immediate SOS surface

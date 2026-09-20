@@ -108,6 +108,18 @@
     <button class="right" data-verb="RIGHT">&rarr;</button>
     <button class="down"  data-verb="BACK">&darr;</button>
   </div>
+  <div class="goto">
+    <div class="goto-title">Send rover to address</div>
+    <div class="goto-row">
+      <label>lat <input id="goto-lat" inputmode="decimal" placeholder="23.687750"></label>
+      <label>lon <input id="goto-lon" inputmode="decimal" placeholder="90.432100"></label>
+      <button id="goto-go">Go</button>
+    </div>
+    <div class="goto-row">
+      <button id="goto-clr" class="link">Cancel current target</button>
+    </div>
+    <div class="goto-status" id="goto-status">tap the map to drop a pin, or type coords</div>
+  </div>
   <div class="hint">Hold a direction - it re-sends every 400 ms; release or
     lose the connection and the rover auto-stops within ~600 ms on its own.</div>
 </div>
