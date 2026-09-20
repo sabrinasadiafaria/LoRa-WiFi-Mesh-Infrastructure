@@ -1733,40 +1733,40 @@ void autoGpsService() {
     }
 
     case RG_SCAN: {
-      // Reuse plain AUTO's look-around logic (it writes scanLeftCm /
-      // scanRightCm and steps scanStep). Run it for as long as RA_SCAN would.
-      if (now - rgStateSince < SERVO_SETTLE_MS) break;
+      // Reuse plain AUTO's look-around pattern (servoWrite + SERVO_SETTLE_MS).
+      // Step 0 = "pan to LEFT, settle, read". Step 1 = "pan to CENTER, read".
+      // Step 2 = "pan to RIGHT, read". Then choose direction and start TURN.
       if (scanStep == 0) {
-        servoSetAngle(SERVO_LEFT_DEG);
+        servoWrite(SERVO_LEFT_DEG);
         scanStep = 1;
         rgStateSince = now;
         break;
       }
-      if (scanStep == 1 && now - rgStateSince >= SCAN_READ_DELAY_MS) {
+      if (now - rgStateSince < SERVO_SETTLE_MS) break;
+      if (scanStep == 1) {
         scanLeftCm = ultrasonicCm;
-        servoSetAngle(SERVO_CENTER_DEG);
+        servoWrite(SERVO_CENTER_DEG);
         scanStep = 2;
         rgStateSince = now;
         break;
       }
-      if (scanStep == 2 && now - rgStateSince >= SCAN_READ_DELAY_MS) {
+      if (scanStep == 2) {
         scanCenterCm = ultrasonicCm;
-        servoSetAngle(SERVO_RIGHT_DEG);
+        servoWrite(SERVO_RIGHT_DEG);
         scanStep = 3;
         rgStateSince = now;
         break;
       }
-      if (scanStep == 3 && now - rgStateSince >= SCAN_READ_DELAY_MS) {
+      if (scanStep == 3) {
         scanRightCm = ultrasonicCm;
-        servoSetAngle(SERVO_CENTER_DEG);
-        // Choose a direction with the most clearance - but instead of the
-        // plain AUTO rule (turn toward whichever side is clearer), compare
-        // each side to the bearing error and prefer the side that heads
-        // closer to the target.
+        servoWrite(SERVO_CENTER_DEG);
+        // "Best path" rule: instead of plain AUTO's "turn toward the clearer
+        // side", compare each side to the target's bearing and prefer the
+        // side that heads closer to the target - unless that side is blocked,
+        // in which case go the other way.
         double err = lastHeadingErrDeg;
         bool targetOnRight = (err > 0);
         int  errSideCm     = targetOnRight ? scanRightCm : scanLeftCm;
-        int  otherSideCm   = targetOnRight ? scanLeftCm  : scanRightCm;
         bool obstacleOnErrSide = (errSideCm > 0 && errSideCm < AUTO_OBSTACLE_CM + 10);
         rgTurningRight = obstacleOnErrSide ? !targetOnRight : targetOnRight;
         uint32_t turnMs = (uint32_t)random((long)AUTO_TURN_MS_MIN, (long)AUTO_TURN_MS_MAX);
