@@ -47,6 +47,24 @@ each OLED shows the same list.
 
 **Capability:** auto neighbour discovery.
 
+### Step 1.1b — long-range link (30 s)
+
+**Cue:** on the LINKS page of any node, point at the RSSI bar beside
+a neighbour's row. Read the dBm number aloud — for the indoor bench
+this is typically in the -55 to -75 range, on the outdoor range test
+(`docs/TEST_REPORT.md` §D) the same nodes regularly hit -100 dBm at
+the edge of the 90 %-loss radius `[PHASE9: ___ m]`. Open the dashboard
+NODES panel; the same RSSI is shown in the per-node table.
+
+> "LoRa's range depends on spreading factor and the air. We pin SF7
+> for the demo because the airtime-vs-sensitivity trade is right for
+> indoor reliability. Flip the spreading factor up in
+> `development/phase 9/Node *.md` and the same hardware pushes past
+> a kilometre outdoors — measured, not theoretical. The number on
+> the OLED is the same physical quantity the radio chip reports."
+
+**Capability:** long-range link, RSSI observability.
+
 ### Step 1.2 — heartbeat + RSSI (1 min)
 
 **Cue:** on a Node A or C OLED, cycle to the LINKS page. Point at the
@@ -290,12 +308,12 @@ Goal: leave the audience with an honest picture.
 
 | Part | Time | Cumulative |
 |---|---|---|
-| 1 network | 3 min | 3 min |
-| 2 rescue app | 5 min | 8 min |
-| 3 resilience | 3 min | 11 min |
-| 4 rover | 2 min | 13 min |
-| 5 limitations | 1 min | 14 min |
-| **Total** | | **~14 min** |
+| 1 network | 3.5 min | 3.5 min |
+| 2 rescue app | 5 min | 8.5 min |
+| 3 resilience | 3 min | 11.5 min |
+| 4 rover | 2 min | 13.5 min |
+| 5 limitations | 1 min | 14.5 min |
+| **Total** | | **~14.5 min** |
 
 Add 5–10 min for Q&A. If running short, **skip Part 5** — the
 limitations doc still ships. If running long, **compress Part 2.5**
@@ -312,6 +330,7 @@ Every step in this script is one line in the proposal's
 | Step | Capability |
 |---|---|
 | 1.1 | auto neighbour discovery |
+| 1.1b | long-range link, RSSI observability |
 | 1.2 | heartbeat monitoring |
 | 1.3 | multi-hop routing, mobile relay |
 | 2.1 | captive portal, no app |
@@ -326,8 +345,9 @@ Every step in this script is one line in the proposal's
 | 4.2 | autonomous rover |
 | 4.3 | mobile relay (closing line) |
 
-That's twelve lines for twelve proposal bullets, in the order they
-make narrative sense.
+That's thirteen lines for twelve proposal bullets (long-range link
+gets its own 30-second slot). The other twelve are in the order
+they make narrative sense.
 
 ---
 
