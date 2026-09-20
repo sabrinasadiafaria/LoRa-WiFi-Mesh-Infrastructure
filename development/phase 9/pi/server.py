@@ -1,9 +1,6 @@
 """
 Flask app: the command-centre dashboard + JSON API + live event stream.
 
-Phase 9 (FINAL) integration build. Canonical copy lives under
-development/pi/; this file mirrors it.
-
 Runs in the same process as the mesh loop (main.py wires them together).
 """
 
@@ -192,8 +189,10 @@ DEST_VERBS = {
     # Phase 8: the rover's drive/mode verbs. FWD/BACK/LEFT/RIGHT/STOP are the
     # bounded manual-drive pulse (see Node Rover.md's dead-man-switch note -
     # a dashboard button held down must keep POSTing to keep it moving).
+    # GOTO and GOCLR are Phase 9 - send the rover to a GPS target.
     "R": {"WHERE", "SOS", "SOSCLR", "PING",
-          "FWD", "BACK", "LEFT", "RIGHT", "STOP", "MODE"},
+          "FWD", "BACK", "LEFT", "RIGHT", "STOP", "MODE",
+          "GOTO", "GOCLR"},
 }
 MODE_ARGS = {"MANUAL", "AUTO", "RELAY"}
 
@@ -249,6 +248,19 @@ def api_command():
     body = request.get_json(force=True, silent=True) or {}
     dest = _safe_dest(body.get("dest", ""))
     verb = (body.get("verb") or "").strip().upper()
+    # GOTO's arg is "lat,lon" as integer microdegrees ("23687750,90432100" for
+    # 23.687750, 90.432100). Uppercasing would corrupt digits and the dash in
+    # negative coords, so GOTO bypasses the normal .upper() / length cap and
+    # runs its own tighter validation.
+    if verb == "GOTO":
+        raw = (body.get("arg") or "").strip()
+        ok, err, normalised = _validate_goto(raw)
+        if not ok:
+            return jsonify(ok=False, error=err), 400
+        MESH.send_cmd(dest, "GOTO", normalised)
+        DB.raw("cmd_out", f"{dest} GOTO {normalised}")
+        publish("command", {"dest": dest, "verb": "GOTO", "arg": normalised})
+        return jsonify(ok=True)
     arg = (body.get("arg") or "").strip().upper()
     if not dest or dest not in DEST_VERBS or verb not in DEST_VERBS[dest]:
         return jsonify(ok=False, error="bad dest or verb"), 400
@@ -260,6 +272,23 @@ def api_command():
     DB.raw("cmd_out", f"{dest} {verb} {arg}")
     publish("command", {"dest": dest, "verb": verb, "arg": arg})
     return jsonify(ok=True)
+
+
+def _validate_goto(raw: str):
+    """Accept '<lat_microdeg>,<lon_microdeg>' in [-90000000, 90000000] each,
+    or 'lat,lon' as plain decimal degrees. Returns (ok, err, normalised)."""
+    if not raw or "," not in raw:
+        return False, "GOTO arg must be 'lat,lon'", ""
+    a, _, b = raw.partition(",")
+    try:
+        la = float(a); lo = float(b)
+    except ValueError:
+        return False, "GOTO arg must be numeric", ""
+    if not (-90.0 <= la <= 90.0 and -180.0 <= lo <= 180.0):
+        return False, "GOTO arg out of range", ""
+    # Normalise to integer microdegrees so the wire bytes are tiny and the
+    # rover doesn't have to do float parsing in a packet path.
+    return True, "", f"{int(round(la * 1e6))},{int(round(lo * 1e6))}"
 
 
 @app.route("/tiles/<int:z>/<int:x>/<int:y>.png")
