@@ -1,0 +1,8 @@
+ts,node_id,free_heap_bytes,loop_max_us,watchdog_resets
+# Each node logs its own serial output at 115200 baud; the Pi scrapes it
+# from the SSE event stream by watching for `pos` and `hb` events with a
+# debug rssi/snr field. Free-heap and loop-max come from the watchdog
+# companion sketch (Phase 6 added getFreeHeap() to the OLED footer).
+2026-09-20T14:00:00Z,PI,142336,842,0
+2026-09-20T14:01:00Z,PI,142400,851,0
+2026-09-20T14:02:00Z,PI,142208,888,0

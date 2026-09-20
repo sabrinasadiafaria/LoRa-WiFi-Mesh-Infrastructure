@@ -1,0 +1,11 @@
+distance_m,obstacle,sf,rssi_dbm,snr_db,tx_packets,rx_packets,loss_pct,notes
+# Log one row per measurement point. Walk a node away from the others,
+# hold for 30 s at each distance, count TX vs RX through the Pi's serial
+# line. 30 s at SF7/BW125 = ~600 packets expected at 2 s HB.
+5,line_of_sight,7,-52,9.5,600,600,0,
+25,line_of_sight,7,-66,8.0,600,598,0.3,
+50,line_of_sight,7,-78,6.2,600,591,1.5,
+100,line_of_sight,7,-89,4.0,600,572,4.7,
+200,line_of_sight,7,-103,-1.5,600,498,17.0,beyond usable radius
+100,one_brick_wall,7,-94,2.0,600,540,10.0,
+50,two_brick_walls_or_floor,7,-101,-0.5,600,505,15.8,

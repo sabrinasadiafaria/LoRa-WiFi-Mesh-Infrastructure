@@ -1,0 +1,7 @@
+ts,packet_type,src,dest,msgid,expected_dup,seen
+# The seen-ID cache in mesh_core.h.md writes one line per packet it sees
+# that was already in the cache. The expected_dup column is filled by
+# hand from the test plan (how many duplicates we expect from the
+# forwarding chain at this SF). A delta near 0 is the success criterion.
+2026-09-20T14:00:00Z,DATA,A,C,143,1,1
+2026-09-20T14:00:01Z,CMD,PI,A,87,0,0
