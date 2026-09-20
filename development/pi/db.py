@@ -120,9 +120,15 @@ class DB:
         nodes = [dict(zip(("id", "last_seen", "rssi", "snr", "uptime", "heap", "online"), r))
                  for r in cur.fetchall()]
 
+        # Latest position PER node - was previously an unbounded SELECT which
+        # grows with the database and can stall the dashboard for seconds on a
+        # Pi that's been running for weeks. A per-id max(ts) keeps it O(N) on
+        # whatever small constant number of nodes this mesh has.
         latest = {}
         for r in self._c.execute(
-                "SELECT id,lat,lon,src,sats,ts FROM positions ORDER BY ts"):
+                "SELECT p.id, p.lat, p.lon, p.src, p.sats, p.ts FROM positions p "
+                "JOIN (SELECT id, MAX(ts) AS mts FROM positions GROUP BY id) m "
+                "ON m.id = p.id AND m.mts = p.ts"):
             latest[r[0]] = {"id": r[0], "lat": r[1], "lon": r[2],
                             "src": r[3], "sats": r[4], "ts": r[5]}
 
@@ -158,3 +164,27 @@ class DB:
         return {"nodes": nodes, "positions": latest, "trails": trails,
                 "sos": sos, "messages": msgs, "reports": reports, "status": status,
                 "rover": rover}
+
+    # ---- housekeeping ------------------------------------------------------
+    # Bounded retention so a Pi that's been running for weeks doesn't have a
+    # multi-GB sqlite file. Trails are recomputed from positions in state(),
+    # so dropping old positions only loses the past 30 minutes of breadcrumbs.
+    POS_RETENTION_S   = 30 * 60       # 30 minutes of trail history
+    MSG_RETENTION_S   = 24 * 3600     # 1 day of message log
+    RPT_RETENTION_S   = 24 * 3600     # 1 day of report log
+    RAW_RETENTION_S   = 6 * 3600      # 6 hours of raw event log
+
+    def trim(self):
+        """Drop rows older than the retention windows. Safe to call from the
+        same on_event thread - it's all one transaction under _lock."""
+        now = time.time()
+        with self._lock:
+            self._c.execute("DELETE FROM positions WHERE ts < ?",
+                            (now - self.POS_RETENTION_S,))
+            self._c.execute("DELETE FROM messages  WHERE ts < ?",
+                            (now - self.MSG_RETENTION_S,))
+            self._c.execute("DELETE FROM reports   WHERE ts < ?",
+                            (now - self.RPT_RETENTION_S,))
+            self._c.execute("DELETE FROM raw_log   WHERE ts < ?",
+                            (now - self.RAW_RETENTION_S,))
+            self._c.commit()

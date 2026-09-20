@@ -12,6 +12,7 @@ Starts the mesh loop (its own thread) and the Flask dashboard on :8000.
 import argparse
 import signal
 import sys
+import threading
 import time
 
 import db as dbmod
@@ -111,6 +112,21 @@ def main():
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, _on_term)
+
+    # Trim old rows out of the SQLite store every 5 minutes. The mesh loop
+    # owns the DB lock so this has to run on a timer thread, not in on_event.
+    last_trim = [0.0]
+    def _trim_tick():
+        while True:
+            time.sleep(60)
+            if time.time() - last_trim[0] < 300:
+                continue
+            last_trim[0] = time.time()
+            try:
+                database.trim()
+            except Exception as e:
+                print("db trim error:", e, file=sys.stderr)
+    threading.Thread(target=_trim_tick, daemon=True, name="db-trim").start()
 
     try:
         # Flask dev server is fine for a single-viewer lab dashboard. For a

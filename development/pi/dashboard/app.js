@@ -1,7 +1,25 @@
-/* SAR Command Centre dashboard */
+/* SAR Command Centre dashboard - redesigned layout.
+   Layout (matches the attached design image):
+
+      +----------------------------------------------------+
+      |  TOP STATUS BAR                                    |
+      +----------------------------+-----------------------+
+      |  NODES MAP                 |  LIVE TELEMETRY       |
+      |  (Leaflet, dark)           |  (per-node cards)     |
+      +----------------------------+-----------------------+
+      |  RECENT ACTIVITY           |  TEAM STATUS          |
+      |  (chronological feed)      |  (per-team cards)     |
+      +----------------------------+-----------------------+
+
+   Plus a floating rover panel that appears once a rover has reported in.
+
+   The data sources are the unchanged JSON API + SSE stream the Pi already
+   exposes (/api/state and /api/events). The state shape is documented at
+   the top of refresh() below.                                       */
 
 const DHAKA = [23.7979, 90.4497];
-const map = L.map('map').setView(DHAKA, 14);
+const map = L.map('map', { zoomControl: true, attributionControl: true })
+              .setView(DHAKA, 13);
 
 // offline tiles from the Pi's cache; falls back to the grey grid if absent
 L.tileLayer('/tiles/{z}/{x}/{y}.png', {
@@ -12,122 +30,134 @@ L.tileLayer('/tiles/{z}/{x}/{y}.png', {
 const markers = {};   // id -> L.marker
 const trails  = {};   // id -> L.polyline
 const sosRing = {};   // id -> L.circle
+let   firstFix = true;
 
+// ---- helpers --------------------------------------------------------
 function nodeColour(id) {
   return { A: '#4da3ff', B: '#ffb040', C: '#a06cff', PI: '#5fd08a', R: '#20c5c5' }[id] || '#ccc';
 }
-
 function icon(id) {
   return L.divIcon({
     className: '',
-    html: `<div style="background:${nodeColour(id)};width:22px;height:22px;border-radius:50%;
+    html: `<div style="background:${nodeColour(id)};width:24px;height:24px;border-radius:50%;
            border:2px solid #fff;display:flex;align-items:center;justify-content:center;
-           font:700 11px system-ui;color:#000">${id}</div>`,
-    iconSize: [22, 22], iconAnchor: [11, 11]
+           font:700 11px -apple-system,system-ui;color:#000">${id}</div>`,
+    iconSize: [24, 24], iconAnchor: [12, 12]
   });
 }
-
 function placeNode(id, lat, lon, meta) {
-  if (!lat && !lon) return;
+  if (lat == null || lon == null || (lat === 0 && lon === 0)) return;
   const ll = [lat, lon];
   if (markers[id]) markers[id].setLatLng(ll);
   else markers[id] = L.marker(ll, { icon: icon(id) }).addTo(map);
-  markers[id].bindPopup(`<b>${id}</b><br>${lat.toFixed(6)}, ${lon.toFixed(6)}` +
+  markers[id].bindPopup(`<b>${id}</b><br>${(+lat).toFixed(6)}, ${(+lon).toFixed(6)}` +
                         (meta ? `<br>${meta}` : ''));
 }
-
 function setTrail(id, pts) {
   if (!pts || pts.length < 2) return;
   if (trails[id]) trails[id].setLatLngs(pts);
   else trails[id] = L.polyline(pts, { color: nodeColour(id), weight: 2, opacity: .5 }).addTo(map);
 }
-
 function fmtAge(s) {
-  if (s == null) return '-';
+  if (s == null) return '--';
   if (s < 60) return Math.round(s) + 's';
   if (s < 3600) return Math.round(s / 60) + 'm';
   return Math.round(s / 3600) + 'h';
 }
-const clock = () => document.getElementById('clock').textContent =
-  new Date().toLocaleTimeString();
-setInterval(clock, 1000); clock();
+function signalBars(rssi) {
+  if (rssi == null) return 0;
+  if (rssi >= -85)  return 4;
+  if (rssi >= -100) return 3;
+  if (rssi >= -110) return 2;
+  return 1;
+}
+function escHtml(s) {
+  return String(s).replace(/[&<>"]/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+function clockFmt() {
+  const d = new Date();
+  return d.toLocaleTimeString([], { hour12: false });
+}
+const tickClock = () => document.getElementById('clock').textContent = clockFmt();
+setInterval(tickClock, 1000); tickClock();
 
-/* ---- full refresh -------------------------------------------------------- */
+function setLink(ok) {
+  const el = document.getElementById('link');
+  const txt = document.getElementById('linktxt');
+  txt.textContent = ok ? 'live' : 'offline';
+  el.className = 'pill ' + (ok ? 'live' : 'off');
+}
+
+// ===================================================================
+// MAIN REFRESH
+//
+// /api/state shape:
+//   now       : float
+//   nodes     : [{id, last_seen, rssi, snr, uptime, heap, online}]
+//   positions : { id -> {id,lat,lon,src,sats,ts} }
+//   trails    : { id -> [[lat,lon], ...] }      last 30 minutes
+//   sos       : [{ts,victim,lat,lon,msg,cleared}]   last 20
+//   messages  : [{ts,src,dest,text,direction}]    last 40
+//   reports   : [{ts,id,code,lat,lon,team}]       last 30
+//   status    : [{id,team,state,ts}]
+//   rover     : [{id,mode,obstacle_cm,battery_pct,ts}]
+//   mesh      : {neighbors:{...}, routes:{...}}
+// ===================================================================
+let lastState = null;
+
 async function refresh() {
   let st;
-  try { st = await (await fetch('/api/state')).json(); }
-  catch (e) { setLink(false); return; }
+  try {
+    st = await (await fetch('/api/state', { cache: 'no-store' })).json();
+  } catch (e) { setLink(false); return; }
   setLink(true);
+  lastState = st;
 
-  const routes = st.mesh.routes || {};
-  const now = st.now;
+  const routes = (st.mesh && st.mesh.routes) || {};
+  const now = st.now || (Date.now() / 1000);
 
-  // nodes table
-  const tb = document.querySelector('#nodes tbody');
-  tb.innerHTML = '';
-  st.nodes.sort((a, b) => a.id.localeCompare(b.id)).forEach(n => {
-    const r = routes[n.id];
-    const route = n.id === 'PI' ? 'self'
-      : r && r.valid ? `via ${r.via} ${r.hops}h` : '-';
-    tb.insertAdjacentHTML('beforeend',
-      `<tr><td>${n.id}</td>
-       <td class="${n.online ? 'on' : 'off'}">${n.online ? 'online' : 'LOST'}</td>
-       <td>${n.rssi ?? '-'}</td><td>${route}</td>
-       <td>${fmtAge(now - n.last_seen)}</td></tr>`);
-  });
+  // ---- top status bar ----
+  const totalNodes = st.nodes.length;
+  const upNodes = st.nodes.filter(n => n.online).length;
+  document.getElementById('topbar-mesh').textContent = `${upNodes} / ${totalNodes} active`;
+  document.getElementById('topbar-mesh').style.color =
+    upNodes === totalNodes && totalNodes > 0 ? 'var(--ok)' :
+    upNodes === 0 ? 'var(--bad)' : 'var(--warn)';
+  const activeSos = (st.sos || []).filter(s => !s.cleared).length;
+  document.getElementById('topbar-sos').textContent = String(activeSos);
+  document.getElementById('topbar-lastupdate').textContent =
+    new Date(now * 1000).toLocaleTimeString([], { hour12: false });
 
-  // positions + trails
-  Object.values(st.positions).forEach(p => {
+  // ---- nodes (positions + trails + map badges) ----
+  const posList = Object.values(st.positions || {});
+  posList.forEach(p => {
     const srcName = { 1: 'GPS', 2: 'phone' }[p.src] || '?';
-    placeNode(p.id, p.lat, p.lon, `${srcName}, ${fmtAge(now - p.ts)} ago`);
+    placeNode(p.id, p.lat, p.lon,
+              `${srcName}, ${fmtAge(now - p.ts)} ago, ${p.sats || 0} sats`);
   });
-  Object.entries(st.trails).forEach(([id, pts]) => setTrail(id, pts));
+  Object.entries(st.trails || {}).forEach(([id, pts]) => setTrail(id, pts));
+  document.getElementById('map-badge').textContent = `${Object.keys(markers).length} markers`;
 
-  // team status
-  const stb = document.querySelector('#status tbody');
-  stb.innerHTML = st.status.map(s =>
-    `<tr><td>${s.id}</td><td>${s.team}</td><td>${s.state}</td></tr>`).join('')
-    || '<tr><td colspan=3 style="color:#666">none yet</td></tr>';
-
-  // rover panel - hidden entirely until a rover has actually reported in
-  const roverList = st.rover || [];
-  const roverSec = document.getElementById('rover-section');
-  if (roverList.length) {
-    roverSec.classList.remove('hidden');
-    document.getElementById('rover-status').innerHTML = roverList.map(rv => {
-      const warn = rv.obstacle_cm >= 0 && rv.obstacle_cm < 25;
-      const range = rv.obstacle_cm >= 0 ? rv.obstacle_cm + 'cm' : 'clear';
-      const batt = rv.battery_pct >= 0 ? rv.battery_pct + '%' : 'n/a';
-      return `<span class="stat-pill">${rv.id} &middot; ${rv.mode}</span>` +
-             `<span class="stat-pill${warn ? ' warn' : ''}">range ${range}</span>` +
-             `<span class="stat-pill">batt ${batt}</span>` +
-             `<span class="stat-pill">seen ${fmtAge(now - rv.ts)} ago</span>`;
-    }).join('');
-  } else {
-    roverSec.classList.add('hidden');
+  // re-centre on first position fix so the operator actually sees something
+  if (firstFix && posList.length) {
+    firstFix = false;
+    const p = posList[0];
+    map.setView([p.lat, p.lon], 15);
   }
 
-  // reports
-  document.getElementById('reports').innerHTML = st.reports.map(r =>
-    `<li><span class="t">${new Date(r.ts * 1000).toLocaleTimeString()}</span>
-     ${r.id} &middot; <b>${r.code}</b> ${r.team ? '(' + r.team + ')' : ''}</li>`).join('')
-    || '<li style="color:#666">none</li>';
-
-  // messages
-  document.getElementById('messages').innerHTML = st.messages.map(m =>
-    `<li><span class="t">${new Date(m.ts * 1000).toLocaleTimeString()}</span>
-     ${m.direction === 'out' ? 'PI &rarr; ' + m.dest : m.src + ' &rarr; PI'}: ${escapeHtml(m.text)}</li>`).join('')
-    || '<li style="color:#666">none</li>';
-
-  // active SOS
-  const active = st.sos.filter(s => !s.cleared);
+  // ---- SOS top banner ----
+  const active = (st.sos || []).filter(s => !s.cleared);
   const bar = document.getElementById('sosbar');
   if (active.length) {
     const s = active[0];
     bar.classList.remove('hidden');
-    bar.textContent = `SOS  ${s.victim}  @ ${s.lat.toFixed(5)}, ${s.lon.toFixed(5)}  -  ${s.msg}`;
-    bar.onclick = () => { if (s.lat) map.setView([s.lat, s.lon], 16); };
-    if (s.lat) {
+    document.getElementById('sosvictim').textContent = s.victim || '--';
+    document.getElementById('sosmsg').textContent = s.msg || 'MAYDAY';
+    document.getElementById('soscoord').textContent =
+      s.lat && s.lon ? `${s.lat.toFixed(5)}, ${s.lon.toFixed(5)}` : 'no position';
+    bar.onclick = () => { if (s.lat && s.lon) map.setView([s.lat, s.lon], 16); };
+    if (s.lat && s.lon) {
       if (sosRing[s.victim]) sosRing[s.victim].setLatLng([s.lat, s.lon]);
       else sosRing[s.victim] = L.circle([s.lat, s.lon],
         { radius: 40, color: '#ff2b2b', fillColor: '#ff2b2b', fillOpacity: .3 }).addTo(map);
@@ -137,66 +167,139 @@ async function refresh() {
     Object.values(sosRing).forEach(c => map.removeLayer(c));
     for (const k in sosRing) delete sosRing[k];
   }
+
+  // ---- live telemetry panel ----
+  const telList = document.getElementById('tel-list');
+  const sortedNodes = [...st.nodes].sort((a, b) => a.id.localeCompare(b.id));
+  document.getElementById('tel-badge').textContent = `${sortedNodes.length} nodes`;
+
+  if (sortedNodes.length === 0) {
+    telList.innerHTML = '<div class="feed-row empty">no nodes reporting yet</div>';
+  } else {
+    telList.innerHTML = sortedNodes.map(n => {
+      const r = routes[n.id];
+      const route = n.id === 'PI' ? 'self'
+                  : r && r.valid ? `via ${r.via} (${r.hops}h)`
+                  : '<span class="bad">no route</span>';
+      const pos = st.positions[n.id];
+      const loc = pos ? `${pos.lat.toFixed(4)}, ${pos.lon.toFixed(4)}` : '<span class="dim">no fix</span>';
+      const age = fmtAge(now - n.last_seen);
+      const rssi = n.rssi;
+      const batt = (st.rover || []).find(r => r.id === n.id);     // rover carries battery
+      const battPct = batt ? batt.battery_pct : null;
+      const battHtml = battPct != null && battPct >= 0
+        ? `<div class="batt"><div class="batt-bar"><i class="${battPct < 25 ? 'warn' : ''} ${battPct < 15 ? 'bad' : ''}"
+              style="width:${battPct}%"></i></div>${battPct}%</div>`
+        : '<div class="batt dim">--</div>';
+      const sigHtml = rssi != null
+        ? `<span class="signal-bars s${signalBars(rssi)}"><i></i><i></i><i></i><i></i></span> ${rssi}`
+        : '<span class="dim">--</span>';
+      const nodeSos = active.find(s => s.victim === n.id);
+      const cls = ['tel-card', !n.online && 'offline', nodeSos && 'sos'].filter(Boolean).join(' ');
+      return `
+        <div class="${cls}">
+          <div class="badge-id" style="background:${nodeColour(n.id)}">${n.id}</div>
+          <div class="body">
+            <div class="title">
+              <span>${escHtml(n.id)}</span>
+              <span class="${n.online ? 'ok' : 'bad'}" style="font-size:11px;font-weight:600">
+                ${n.online ? 'online' : 'LOST'}
+              </span>
+            </div>
+            <div class="meta">
+              <span>RSSI ${sigHtml}</span>
+              <span class="dim">${route}</span>
+              <span class="dim">${loc}</span>
+            </div>
+          </div>
+          <div class="right">
+            <div class="age">${age} ago</div>
+            ${battHtml}
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // ---- recent activity panel (chronological merge of reports + messages + SOS) ----
+  const feed = document.getElementById('feed');
+  const events = [];
+  (st.sos || []).forEach(s => events.push({
+    ts: s.ts, kind: 'sos',
+    who: s.victim || 'unknown',
+    what: (s.msg || 'MAYDAY') + (s.cleared ? ' (cleared)' : ''),
+  }));
+  (st.reports || []).forEach(r => events.push({
+    ts: r.ts, kind: 'report',
+    who: r.id || 'unknown',
+    what: `${r.code}${r.team ? ' - ' + r.team : ''}${
+      r.lat && r.lon ? ' @ ' + r.lat.toFixed(4) + ',' + r.lon.toFixed(4) : ''}`,
+  }));
+  (st.messages || []).forEach(m => events.push({
+    ts: m.ts, kind: 'msg',
+    who: m.direction === 'out' ? `${m.src} -> ${m.dest}` : `${m.src} -> PI`,
+    what: m.text,
+  }));
+  events.sort((a, b) => b.ts - a.ts);
+
+  document.getElementById('act-badge').textContent =
+    events.length ? `${events.length} event${events.length === 1 ? '' : 's'}` : 'no events';
+
+  if (events.length === 0) {
+    feed.innerHTML = '<div class="feed-row empty">no activity yet</div>';
+  } else {
+    feed.innerHTML = events.slice(0, 50).map(e => {
+      const t = new Date(e.ts * 1000).toLocaleTimeString([], { hour12: false });
+      const ic = { sos: 'SOS', report: 'RPT', msg: 'MSG' }[e.kind] || '.';
+      return `
+        <div class="feed-row ${e.kind}">
+          <span class="t">${t}</span>
+          <span class="ic">${ic}</span>
+          <div class="body">
+            <div class="who">${escHtml(e.who)}</div>
+            <div class="what">${escHtml(e.what)}</div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // ---- team status panel ----
+  const teamList = document.getElementById('team-list');
+  const teamArr = (st.status || []).slice().sort((a, b) => a.id.localeCompare(b.id));
+  document.getElementById('team-badge').textContent =
+    `${teamArr.length} member${teamArr.length === 1 ? '' : 's'}`;
+  if (teamArr.length === 0) {
+    teamList.innerHTML = '<div class="feed-row empty">no team members yet</div>';
+  } else {
+    teamList.innerHTML = teamArr.map(t => {
+      const initials = (t.id || '??').slice(0, 2).toUpperCase();
+      const state = (t.state || 'UNKNOWN').toUpperCase();
+      const stateCls = ['AVAILABLE','SEARCHING','NEED_ASSIST','EMERGENCY','VICTIM_FOUND']
+                       .includes(state) ? state : 'UNKNOWN';
+      const age = fmtAge(now - t.ts);
+      return `
+        <div class="team-card">
+          <div class="avatar">${escHtml(initials)}</div>
+          <div class="body">
+            <div class="name">${escHtml(t.id)}</div>
+            <div class="role">Team ${escHtml(t.team || '?')}</div>
+          </div>
+          <div class="right">
+            <span class="status-chip ${stateCls}">${escHtml(state)}</span>
+            <span class="age">${age} ago</span>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // ---- rover floating panel ----
+  renderRover(st.rover || [], now);
 }
 
-function setLink(ok) {
-  const el = document.getElementById('link');
-  el.textContent = ok ? 'live' : 'offline';
-  el.className = 'pill ' + (ok ? 'ok' : 'bad');
-}
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"]/g, c =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-}
-
-/* ---- live events: refresh on any, plus instant SOS ---------------------- */
-function connectSSE() {
-  const es = new EventSource('/api/events');
-  es.onopen = () => setLink(true);
-  es.onerror = () => setLink(false);
-  es.onmessage = ev => {
-    let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
-    if (m.kind === 'sos') refresh();          // surface immediately
-    else if (['pos', 'node', 'report', 'status', 'message', 'hb', 'command', 'rover'].includes(m.kind)) {
-      clearTimeout(connectSSE._t);
-      connectSSE._t = setTimeout(refresh, 300);   // debounce bursts
-    }
-  };
-}
-
-/* ---- outbound ---------------------------------------------------------- */
-async function sendMsg() {
-  const dest = document.getElementById('dest').value;
-  const text = document.getElementById('msg').value.trim();
-  if (!text) return;
-  const r = await fetch('/api/send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dest, text })
-  });
-  document.getElementById('sendmsg').textContent =
-    r.ok ? 'sent' : 'failed';
-  if (r.ok) document.getElementById('msg').value = '';
-}
-async function cmd(verb) {
-  const dest = document.getElementById('cdest').value;
-  const r = await fetch('/api/command', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dest, verb })
-  });
-  document.getElementById('sendmsg').textContent =
-    r.ok ? `${verb} sent to ${dest}` : 'command failed';
-}
-
-/* ---- rover drive controls -------------------------------------------------
-   The firmware's safety model is a bounded drive pulse (MANUAL_PULSE_MS,
-   ~600ms) per command - see Node Rover.md. So "holding" a direction here
-   means re-sending it every 400ms (inside the pulse window) for as long as
-   the button/touch is held; releasing, or losing the connection, means the
-   rover coasts to a stop on its own within one pulse - no separate "did the
-   stop command arrive" failure mode to worry about. We also send an
-   explicit STOP on release, for an instant stop rather than waiting out the
-   last pulse. */
+// ===================================================================
+// ROVER PANEL
+// ===================================================================
 let roverHoldTimer = null;
+let lastRoverMode = null;
 
 function roverSendVerb(verb) {
   fetch('/api/command', {
@@ -215,22 +318,77 @@ function roverStopHold(verb) {
   roverHoldTimer = null;
   if (verb !== 'STOP') roverSendVerb('STOP');
 }
-document.querySelectorAll('#dpad .dbtn').forEach(btn => {
+function roverSetMode(mode) {
+  fetch('/api/command', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dest: 'R', verb: 'MODE', arg: mode })
+  }).catch(() => {});
+}
+
+function renderRover(roverList, now) {
+  const fab = document.getElementById('rover-fab');
+  if (!roverList.length) {
+    fab.classList.remove('visible');
+    return;
+  }
+  fab.classList.add('visible');
+  const r = roverList[0];
+  const pillsEl = document.getElementById('rover-pills');
+  const warn = r.obstacle_cm >= 0 && r.obstacle_cm < 25;
+  const range = r.obstacle_cm >= 0 ? `${r.obstacle_cm} cm` : 'clear';
+  const batt = r.battery_pct >= 0 ? `${r.battery_pct}%` : 'n/a';
+  pillsEl.innerHTML =
+    `<span class="pill">id R</span>` +
+    `<span class="pill ${warn ? 'warn' : 'ok'}">range ${range}</span>` +
+    `<span class="pill">battery ${batt}</span>` +
+    `<span class="pill">seen ${fmtAge(now - r.ts)} ago</span>`;
+
+  // update mode-button highlight if it changed
+  if (r.mode !== lastRoverMode) {
+    lastRoverMode = r.mode;
+    document.querySelectorAll('#rover-fab .mode button').forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === r.mode);
+    });
+  }
+}
+
+// wire the d-pad once
+document.querySelectorAll('#rover-fab .dpad button').forEach(btn => {
   const verb = btn.dataset.verb;
   btn.addEventListener('mousedown', () => roverStartHold(verb));
   btn.addEventListener('touchstart', e => { e.preventDefault(); roverStartHold(verb); });
   ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(ev =>
     btn.addEventListener(ev, () => roverStopHold(verb)));
 });
-async function roverMode() {
-  const arg = document.getElementById('rover-mode-select').value;
-  const r = await fetch('/api/command', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dest: 'R', verb: 'MODE', arg })
-  });
-  document.getElementById('sendmsg').textContent = r.ok ? `rover mode -> ${arg}` : 'mode command failed';
+// wire the mode buttons
+document.querySelectorAll('#rover-fab .mode button').forEach(btn => {
+  btn.addEventListener('click', () => roverSetMode(btn.dataset.mode));
+});
+
+// ===================================================================
+// SSE - debounced refresh + immediate SOS surface
+// ===================================================================
+function connectSSE() {
+  let es;
+  try {
+    es = new EventSource('/api/events');
+  } catch (e) { setLink(false); return; }
+  es.onopen = () => setLink(true);
+  es.onerror = () => setLink(false);
+  es.onmessage = ev => {
+    let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m.kind === 'sos') { refresh(); return; }
+    if (['pos', 'node', 'report', 'status', 'message', 'hb',
+         'command', 'rover', 'route'].includes(m.kind)) {
+      clearTimeout(connectSSE._t);
+      connectSSE._t = setTimeout(refresh, 300);    // debounce bursts
+    }
+  };
 }
 
+// ===================================================================
+// boot
+// ===================================================================
 refresh();
 connectSSE();
-setInterval(refresh, 10000);      // safety net if SSE drops
+setInterval(refresh, 10000);     // safety net if SSE drops

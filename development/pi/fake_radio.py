@@ -41,7 +41,6 @@ class FakeRadio:
     def poll(self):
         now = time.time()
         if now < self._next:
-            time.sleep(0.02)
             return None
         self._next = now + random.uniform(1.5, 4.0)
 

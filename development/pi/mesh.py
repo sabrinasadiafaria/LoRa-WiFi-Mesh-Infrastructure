@@ -217,8 +217,13 @@ class Mesh:
             frame = self._txq.pop(0) if self._txq else None
         if frame is None:
             return
-        self.radio.send(frame)
-        self._last_tx = time.time() + random.uniform(0, 0.2)
+        # Only update _last_tx if the radio actually accepted the frame.
+        # A failed TX must not consume the airtime budget or back-off retries
+        # further than the jitter already added - otherwise a wedged radio
+        # would silently slow every subsequent transmission to a crawl.
+        ok = self.radio.send(frame)
+        if ok:
+            self._last_tx = time.time() + random.uniform(0, 0.2)
 
     def _handle(self, pkt, rssi, snr):
         src = pkt["src"]
