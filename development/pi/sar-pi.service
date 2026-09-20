@@ -1,20 +1,21 @@
 # SAR Command Centre - run the Pi mesh node + dashboard on boot.
 #
-#   sudo cp sar-pi.service /etc/systemd/system/
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable --now sar-pi
-#   journalctl -u sar-pi -f            # live logs
-#   sudo systemctl stop sar-pi         # do this before running main.py by hand -
-#                                       # two instances fight over the same GPIO/SPI
+# Easiest path: run  bash install.sh --enable   from development/pi/.
+# It sed-substitutes User, WorkingDirectory and ExecStart with the real
+# values from your Pi (current user, repo path) and installs the unit.
 #
-# EDIT User= AND BOTH PATHS BELOW to match your actual Pi username and where
-# you cloned the repo. This file ships with placeholders - "pi" and
-# "/home/pi/..." are almost certainly NOT your setup (e.g. user "admin",
-# home "/home/admin/..."). Check with:  whoami   and   pwd  (from inside
-# development/pi/).
+# If you'd rather do it by hand:
+#   1. edit the three lines marked <TEMPLATE> below
+#   2. sudo cp sar-pi.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now sar-pi
+#   5. journalctl -u sar-pi -f
 #
-# Note: this points at development/pi/ - the ONE canonical Pi codebase, not
-# a per-phase copy. There is no "phase N/pi" to keep in sync any more.
+# Day-to-day updates from upstream:
+#   bash update.sh
+#
+# IMPORTANT: sudo systemctl stop sar-pi  before running main.py by hand -
+# two instances fight over the same GPIO/SPI and the loser hangs.
 
 [Unit]
 Description=SAR LoRa Mesh Command Centre
@@ -22,9 +23,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/LoRa-WiFi-Mesh-Infrastructure/development/pi
-ExecStart=/home/pi/LoRa-WiFi-Mesh-Infrastructure/development/pi/venv/bin/python3 main.py
+User=pi                                      # <TEMPLATE> your pi username
+WorkingDirectory=/home/pi/LoRa-WiFi-Mesh-Infrastructure/development/pi   # <TEMPLATE>
+ExecStart=/home/pi/LoRa-WiFi-Mesh-Infrastructure/development/pi/venv/bin/python3 main.py   # <TEMPLATE>
 Restart=on-failure
 RestartSec=3
 
