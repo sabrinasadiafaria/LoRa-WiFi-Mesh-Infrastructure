@@ -1,182 +1,149 @@
-# Phase 9 — Integration, Tuning & Field / Range Test
+# Phase 9 — Integration build for demo day
 
-**Goal:** every subsystem from Phases 1–8 running together, tuned with measured numbers, and
-validated at outdoor range — turning four demoable pieces into one coherent system.
+**Goal:** one folder a tester (or a grader) can flash and run end-to-end
+without reading any earlier phase folder. Everything that phases 1–8 added
+lives here as **complete, standalone, paste-into-Arduino sketches** for
+every node, plus a runnable copy of the Pi codebase.
 
-This phase has **no firmware changes and no dashboard changes**. It is purely about *running*
-what's already there, *measuring* what it actually does, *tuning* the few constants that need
-tuning, and *writing the test report*. Anything new that turns up in the test that *requires*
-code work is filed as a bug and addressed in a follow-up phase, not silently patched here.
+This phase also defines what the integration test actually measures
+(`docs/TEST_REPORT.md` next to `phase 9/`), what can be tuned and how
+(`docs/TUNING.md`), and what must be true for the phase to be called
+done.
 
 ---
 
 ## What's in this folder
 
-| File | What |
-|---|---|
-| `README.md` | this file |
-| `TUNING.md` | which constants to measure, in what order, with the knobs table copied from `docs/TUNING.md` |
-| `TEST_REPORT.md` | the actual filled-in soak + range + end-to-end results |
-| `TEMPLATES/` | copy-paste log capture sheets (RSSI table, heap log template, packet-loss counter template) |
+| Path | What | Flash / run as |
+|---|---|---|
+| `Node A.md` | Classic ESP32 node with Wi-Fi portal + GPS + SOS + team status | Node A on a classic ESP32 |
+| `Node B.md` | Classic ESP32 relay (mesh + optional GPS, no portal) | Node B on a classic ESP32 |
+| `Node C.md` | Classic ESP32 node — mirror of A (portal + GPS + SOS) | Node C on a classic ESP32 |
+| `Node Rover.md` | ESP32-S3 with motors + ultrasonic + GPS + E-STOP | Rover on an ESP32-S3 |
+| `pi/main.py` | Pi gateway entrypoint | the gateway Pi |
+| `pi/server.py` | Pi Flask dashboard + JSON API + SSE | the gateway Pi |
+| `pi/mesh.py` | Pi as a mesh node (read + write LoRa) | the gateway Pi |
+| `pi/db.py` | Pi SQLite store | the gateway Pi |
+| `pi/sx1278.py` | Pi SX1278 driver (matches node PHY exactly) | the gateway Pi |
+| `pi/fake_radio.py` | no-hardware stand-in for the SX1278 | the gateway Pi |
+| `pi/dashboard/*` | Leaflet UI, top-bar SOS banner, rover panel | the gateway Pi |
+| `pi/requirements.txt`, `pi/sar-pi.service`, `pi/.gitignore` | supporting Pi files | the gateway Pi |
+| `TEMPLATES/*` | CSV/CSV templates for soak + range + dedup logs | the tester's laptop |
+| `README.md` | this file | — |
+| `docs/TEST_REPORT.md` | the actual test report to fill in | — (linked from here) |
+| `docs/TUNING.md` | which knobs can be touched and how | — (linked from here) |
 
-Everything Pi-side lives in `development/pi/` as usual. There is no `phase 9/pi/`.
-
----
-
-## Why this phase exists separately
-
-Phases 1–8 each verified their piece in isolation. The rover works on the bench. The dashboard
-shows the mesh. The portal works on a phone. None of those tests proves the **whole** system
-stays up for two hours with a phone attached and the rover driving between two separated nodes.
-That's the gap Phase 9 closes.
-
-Three things can only be found by integration:
-
-1. **Resource contention between subsystems.** Phase 0 test 7 confirmed `softAP + LoRa RX`
-   coexist on one ESP32, but does not say what happens with `softAP + LoRa RX + GPS + NMEA
-   parser + WebServer + telemetry broadcast + serial monitor` all on one core. The answer
-   surfaces during a 2 h soak as a rising loop counter or a heap that trends down.
-2. **LoRa congestion when everyone talks.** All three static nodes are broadcasting; the rover
-   is broadcasting; the gateway is broadcasting. The Phase 7 collision measurement was three
-   radios, not five. The full-system number is the one that matters for the demo.
-3. **Behaviour under realistic path loss.** Indoor bench tests at 2 m show perfect RSSI. An
-   outdoor test with a node behind a brick wall is what proves the demo will work in the
-   room where it's actually given.
+The Pi folder under `development/pi/` is the **canonical copy** that the
+team edits day-to-day. This `phase 9/pi/` is a snapshot of it taken when
+phase 9 was assembled, retitled as the integration build, and is bit-for-
+bit identical other than the docstrings pointing back here. If you change
+something in `development/pi/` after the phase 9 drop, copy it back into
+`phase 9/pi/` so the two stay in sync.
 
 ---
 
-## What "done" means for Phase 9
+## What you flash on demo day
 
-There is exactly one completion gate, and it is a *scripted end-to-end run*: see
-`TEST_REPORT.md` §A. Everything else (soak, range, tuning) feeds into whether that run passes.
+| Board | File | Phase 7–8 did it need portal/relay? |
+|---|---|---|
+| ESP32 (Node A) | `Node A.md` | portal + GPS + SOS + mesh |
+| ESP32 (Node B) | `Node B.md` | mesh-only relay (no portal) |
+| ESP32 (Node C) | `Node C.md` | mirror of A |
+| ESP32-S3 (Rover) | `Node Rover.md` | mesh + motors + ultrasonic + GPS |
+| Raspberry Pi | `pi/main.py` | own LoRa radio + dashboard on :8000 |
 
-The end-to-end scenario is the one called out in `docs/PLAN.md` §12 Phase 7 and reproduced
-in `docs/DEMO_SCRIPT.md`. It exercises every proposal "demonstrated capability" line:
+Library list and wiring for each board is inside the header block of
+each `Node X.md`. The Pi wiring is in the first ~50 lines of
+`pi/sx1278.py`.
 
-1. Phone joins Node A's portal → shares GPS → sends a message.
-2. Node A raises SOS from the portal.
-3. SOS + location appear on every node OLED and on the Pi dashboard map within ~2 s.
-4. Commander dispatches the rover from the dashboard's Rover panel.
-5. Node B is powered off → mesh self-heals → dashboard shows it.
-6. A TEXT reply from the dashboard reaches Node C.
-7. Node B restored → route recovers.
+## What you run
 
-Phase 9 calls this the **E2E scenario** and runs it **three times consecutively**. Any single
-failure is a fail for the whole phase.
+```bash
+# the Pi dashboard gateway
+cd phase\ 9/pi
+pip install -r requirements.txt
+python main.py --fake-radio    # no hardware (laptop demo)
+python main.py                 # with the SX1278 wired to the Pi
+```
 
-In parallel:
+Then browse `http://<pi-ip>:8000/` for the dashboard and
+`http://<pi-ip>:8000/portal` for the phone-friendly portal.
 
-- A **2-hour soak** with the full system powered and quiet (no commands) shows no watchdog
-  reset, no monotonic heap decline, no missed heartbeats.
-- An **outdoor range test** with logged RSSI/distance at the chosen SF gives a real usable
-  radius for the day of the demo.
-- A **tuning pass** records which constants were changed and to what, with the measurement
-  that motivated each change.
+---
+
+## Why this is in front of the integration test
+
+Earlier phases each verified their piece in isolation. Phase 9 doesn't.
+It expects every piece to be present and working together:
+
+- **Three static nodes + rover + Pi**, all running the sketches in this
+  folder, all reachable from one another in range.
+- **Pi dashboard** at :8000 with the four panels (map, telemetry,
+  activity, team) and the sliding rover panel.
+- **Portal at /portal** on the Pi for the convenience of demo audiences
+  who connect directly to the Pi rather than a node's AP.
+- **Real numbers from a real run** in `docs/TEST_REPORT.md`.
+
+The skills and tools needed to wire/test all five boxes are in
+`docs/BUILD_AND_FLASH.md` and per-board in each sketch's header.
 
 ---
 
 ## Test method
 
-### Step 1 — bench pre-flight (do this first, do not skip)
+Full procedure: `docs/TEST_REPORT.md` in this folder.
 
-Before the full E2E scenario, confirm every piece individually still works:
+The headline gate is **§A — end-to-end scenario run three consecutive
+times**. The script lives in `docs/DEMO_SCRIPT.md` (still to be written
+in phase 10, but the step list is in `TEST_REPORT.md` §A already).
 
-- [ ] Node A, B, C boot and join the mesh (routing tables converge in <60 s).
-- [ ] Rover joins as `R`, mode `MANUAL`, no drive commands on bench.
-- [ ] Pi dashboard loads in <3 s, all four panels render, SOS banner hidden, rover panel visible.
-- [ ] Portal auto-pops on a real Android phone, all five portal actions work.
-- [ ] Watchdog log on every node is clean (last reset reason `POWERON` or `SW`, not `BROWNOUT`).
-
-This is the same checklist every previous phase ended on, run one final time. **If any of
-these fails, fix it before running the scenario.** Phase 9 is not the place to discover a
-broken portal.
-
-### Step 2 — capture the soak
-
-| Property | Value |
-|---|---|
-| Duration | 2 h minimum |
-| Nodes powered | A, B, C, R, Pi |
-| User activity | none (no commands, no portal connections) |
-| Logs captured | each node serial @ 115 200 baud; Pi `journalctl -u sar-dashboard`; RSSI every minute |
-| Measured | watchdog resets; `getFreeHeap()` trend; missed HB count (Pi-side); packet-loss %; mesh route stability |
-
-A simple Python tick on the Pi can scrape `getFreeHeap()` from the SSE stream and write a CSV.
-The template is in `TEMPLATES/heap_log_template.csv`.
-
-### Step 3 — outdoor range test
-
-Walk one node away from the others, logging RSSI every 5 m. The Phase 0 test 6 was a sanity
-check; this is the real number for the demo. Fill `TEMPLATES/rssi_table.csv`.
-
-| Distance (m) | RSSI (dBm) | SNR | Packet-loss % | Notes |
-|---|---|---|---|---|
-| 5  | | | | line of sight |
-| 25 | | | | line of sight |
-| 50 | | | | line of sight |
-| 100| | | | line of sight |
-| 200| | | | line of sight |
-| 100| | | | one brick wall between |
-| 50 | | | | two brick walls / floor between |
-
-If the line-of-sight radius is shorter than the demo room, **change the demo, not the
-modulation** — SF9 is already what Phase 7 chose. Going to SF10/SF11 buys a few metres and
-costs ~3× airtime. The right answer for a small room is "drive the rover between them",
-which is what the proposal promised.
-
-### Step 4 — end-to-end scenario (the gate)
-
-Run `docs/DEMO_SCRIPT.md` end-to-end, with the rover driving in `AUTO` while the scenario
-runs in parallel. Time each step. Record pass/fail per step in `TEST_REPORT.md` §A.
-
-**Three consecutive runs.** Any one failure → phase fail. No "but it worked the second time"
-credit; the script must be reliable enough to give live in front of graders.
-
-### Step 5 — tuning pass
-
-After the soak + range + E2E numbers are in, walk `TUNING.md` and only change a knob if the
-measurement says to. Typical changes after a real test:
-
-- **Beacon interval**: raise if packet loss is mostly self-inflicted collisions.
-- **Heartbeat timeout**: raise if nodes are flapping during normal load.
-- **`AUTO_OBSTACLE_CM`**: tune to the rover's actual stopping distance at the chosen speed.
-- **Portal's HTTP keep-alive**: shorten if the dashboard's SSE is starved when a phone is
-  actively sharing location.
-
-Anything else is "looks wrong to me", which is not a tuning criterion.
+Supporting measurements:
+- **§B**: tuning-pass log — one row per knob that was actually changed
+  between iterations.
+- **§C**: 2-hour soak with heap + watchdog + packet-loss CSV.
+- **§D**: outdoor range test, RSSI vs distance at the chosen SF.
+- **§E**: duplicate-forward verification (sees the seen-ID cache from
+  phase 1 still working).
+- **§F**: any defects that need code, listed here so they don't get
+  lost.
 
 ---
 
-## What is *not* in Phase 9
+## What's *not* in Phase 9
 
-- **No new features.** Encryption, duty-cycle enforcement, solar, real field trials are all
-  out of scope (proposal §"Future Scope").
-- **No refactor.** If the integration test surfaces ugly code, that's a Phase 11 task.
-- **No dashboard redesign.** Phase 9 just landed; leave it alone for the demo.
-- **No new packets, no protocol changes.** The packet spec is frozen at v3 (`docs/PACKET_SPEC.md`).
+- **No new features.** Encryption, duty cycle, solar, field trials are
+  all future-scope.
+- **No refactor.** If the integration run surfaces ugly code, that's a
+  phase 10 follow-up. Phase 9 is read-only on the code.
+- **No dashboard redesign.** Phase 9 already shipped a clean dashboard;
+  leave it alone for demo day.
+- **No protocol changes.** The packet spec is frozen at v3. If something
+  needs a new packet type, that's a v4 bump and a fresh plan, not a
+  tuning pass.
 
 ---
 
 ## Completion criteria
 
-- [ ] Bench pre-flight checklist all green.
-- [ ] 2 h soak: zero watchdog resets, heap trend < ±2 KB over the run, missed-HB count
-      (Pi-side) = 0, packet-loss % recorded.
-- [ ] Outdoor range test: at least three distance + obstacle rows logged with real numbers.
-- [ ] E2E scenario passes **3 times consecutively** with timing recorded.
-- [ ] `docs/TUNING.md` populated with only the constants that were actually changed and why.
-- [ ] `docs/TEST_REPORT.md` filled in (this phase's deliverable).
-- [ ] All numbers from above copied into `docs/DEMO_SCRIPT.md` so the demo runner knows
-      what to expect on the day.
-
-A reviewer who has never seen the project should be able to read `TEST_REPORT.md` and
-understand exactly how well the system works and under what conditions.
+- [ ] §0 bench pre-flight all green
+- [ ] 2-hour soak: zero watchdog resets, heap ±2 KB, missed HB = 0
+- [ ] outdoor range test: 90 %-loss radius recorded for at least 3
+      obstacle conditions
+- [ ] end-to-end scenario passes **3 consecutive runs**
+- [ ] `TUNING.md` knobs table reflects any change that was made, with a
+      measurement that motivated it
+- [ ] `TEST_REPORT.md` §G signed off by reviewer
+- [ ] All headline numbers copied into `DEMO_SCRIPT.md` (phase 10
+      deliverable) so the demo runner knows what to expect on the day
 
 ---
 
 ## Carry-over to Phase 10
 
-Phase 10 = `docs/DEMO_SCRIPT.md`, `docs/ARCHITECTURE.md`, `docs/WIRING.md`,
-`docs/LIMITATIONS.md`, `docs/FINAL_REPORT.md`, `development/README.md` rewrite, root
-`README.md` pointer. Phase 10 needs Phase 9's numbers to be honest, so the two phases
-share a `TEST_REPORT.md` boundary: Phase 9 fills it, Phase 10 quotes it.
+Phase 10 = `docs/DEMO_SCRIPT.md`, `docs/ARCHITECTURE.md`,
+`docs/WIRING.md`, `docs/LIMITATIONS.md`, `docs/FINAL_REPORT.md`,
+`development/README.md` rewrite, root `README.md` pointer.
+
+Phase 10 needs the Phase 9 numbers to be honest, so the two phases
+share `TEST_REPORT.md` as the boundary: phase 9 fills it in, phase 10
+quotes from it.

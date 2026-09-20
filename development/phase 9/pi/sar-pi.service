@@ -1,0 +1,32 @@
+# SAR Command Centre - run the Pi mesh node + dashboard on boot.
+#
+#   sudo cp sar-pi.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now sar-pi
+#   journalctl -u sar-pi -f            # live logs
+#   sudo systemctl stop sar-pi         # do this before running main.py by hand -
+#                                       # two instances fight over the same GPIO/SPI
+#
+# EDIT User= AND BOTH PATHS BELOW to match your actual Pi username and where
+# you cloned the repo. This file ships with placeholders - "pi" and
+# "/home/pi/..." are almost certainly NOT your setup (e.g. user "admin",
+# home "/home/admin/..."). Check with:  whoami   and   pwd  (from inside
+# development/pi/).
+#
+# Note: this points at development/pi/ - the ONE canonical Pi codebase, not
+# a per-phase copy. There is no "phase N/pi" to keep in sync any more.
+
+[Unit]
+Description=SAR LoRa Mesh Command Centre
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/LoRa-WiFi-Mesh-Infrastructure/development/pi
+ExecStart=/home/pi/LoRa-WiFi-Mesh-Infrastructure/development/pi/venv/bin/python3 main.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
