@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAR Command Centre</title>
+<meta name="theme-color" content="#0d1117">
+<link rel="stylesheet" href="leaflet/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Active SOS banner - shows on top of everything when there is one -->
+<div id="sosbar" class="sos-alert hidden">
+  <span class="ic">SOS</span>
+  <span class="victim" id="sosvictim">--</span>
+  <span class="msg" id="sosmsg"></span>
+  <span class="coord" id="soscoord">--</span>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">SAR</div>
+    <div>
+      <div class="title">Command Centre</div>
+      <div class="subtitle">LoRa-WiFi Mesh</div>
+    </div>
+  </div>
+
+  <div class="stat">
+    <span class="k">Mesh</span>
+    <span class="v" id="topbar-mesh">0 / 0</span>
+  </div>
+  <div class="stat">
+    <span class="k">Active SOS</span>
+    <span class="v" id="topbar-sos" style="color: var(--bad)">0</span>
+  </div>
+  <div class="stat">
+    <span class="k">Last update</span>
+    <span class="v" id="topbar-lastupdate">--</span>
+  </div>
+
+  <div class="right">
+    <span class="pill live" id="link"><span class="dot"></span><span id="linktxt">live</span></span>
+    <span class="clock" id="clock">--:--:--</span>
+  </div>
+</header>
+
+<main class="grid">
+
+  <!-- Top-left: nodes map -->
+  <section class="panel" id="map-panel">
+    <div class="panel-head">
+      <h2>Nodes Map</h2>
+      <span class="badge" id="map-badge">0 markers</span>
+    </div>
+    <div class="panel-body no-pad"><div id="map"></div></div>
+  </section>
+
+  <!-- Top-right: live telemetry -->
+  <section class="panel" id="tel-panel">
+    <div class="panel-head">
+      <h2>Live Telemetry</h2>
+      <span class="badge" id="tel-badge">0 nodes</span>
+    </div>
+    <div class="panel-body">
+      <div class="tel-list" id="tel-list"></div>
+    </div>
+  </section>
+
+  <!-- Bottom-left: recent activity -->
+  <section class="panel" id="act-panel">
+    <div class="panel-head">
+      <h2>Recent Activity</h2>
+      <span class="badge" id="act-badge">last hour</span>
+    </div>
+    <div class="panel-body">
+      <div class="feed" id="feed"></div>
+    </div>
+  </section>
+
+  <!-- Bottom-right: team status -->
+  <section class="panel" id="team-panel">
+    <div class="panel-head">
+      <h2>Team Status</h2>
+      <span class="badge" id="team-badge">0 members</span>
+    </div>
+    <div class="panel-body">
+      <div class="team-list" id="team-list"></div>
+    </div>
+  </section>
+
+</main>
+
+<!-- Rover floating panel - hidden until a rover has reported in -->
+<div class="rover-fab" id="rover-fab">
+  <h3><span style="color: var(--acc)">R</span> Rover</h3>
+  <div class="pills" id="rover-pills"></div>
+  <div class="mode">
+    <button data-mode="MANUAL" id="rmode-MANUAL">MANUAL</button>
+    <button data-mode="AUTO"   id="rmode-AUTO">AUTO</button>
+    <button data-mode="RELAY"  id="rmode-RELAY">RELAY</button>
+  </div>
+  <div class="dpad">
+    <button class="up"    data-verb="FWD">&uarr;</button>
+    <button class="left"  data-verb="LEFT">&larr;</button>
+    <button class="mid stop" data-verb="STOP">&#9632;</button>
+    <button class="right" data-verb="RIGHT">&rarr;</button>
+    <button class="down"  data-verb="BACK">&darr;</button>
+  </div>
+  <div class="goto">
+    <div class="goto-title">Send rover to address</div>
+    <div class="goto-row">
+      <label>lat <input id="goto-lat" inputmode="decimal" placeholder="23.687750"></label>
+      <label>lon <input id="goto-lon" inputmode="decimal" placeholder="90.432100"></label>
+      <button id="goto-go">Go</button>
+    </div>
+    <div class="goto-row">
+      <button id="goto-clr" class="link">Cancel current target</button>
+    </div>
+    <div class="goto-status" id="goto-status">tap the map to drop a pin, or type coords</div>
+  </div>
+  <div class="hint">Hold a direction - it re-sends every 400 ms; release or
+    lose the connection and the rover auto-stops within ~600 ms on its own.</div>
+</div>
+
+<script src="leaflet/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
