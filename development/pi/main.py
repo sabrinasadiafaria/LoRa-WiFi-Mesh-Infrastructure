@@ -1,23 +1,50 @@
 #!/usr/bin/env python3
 """
-SAR Command Centre - entry point.
+SAR Command Centre - Phase 10 entry point.
 
-  python3 main.py                 # normal run (needs the SX1278 wired)
-  python3 main.py --fake-radio    # no hardware: replays synthetic packets,
-                                  # so the dashboard can be demoed on any PC
+  python3 main.py                 # normal run (needs SX1278 wired)
+  python3 main.py --fake-radio    # no hardware: synthetic packets
+  python3 main.py --fake-radio --port 8000
 
-Starts the mesh loop (its own thread) and the Flask dashboard on :8000.
+Wires together:
+  - Mesh loop (LoRa RX/TX in its own thread)
+  - Flask dashboard on :8000
+  - Node Health Manager (background thread)
+  - Alert/Event System
+  - Message Router with ACK/retry
+  - Mission Manager
+  - Rover Command Coordinator
+
+Phase 10 extends Phase 9; every Phase 9 feature still works exactly
+as before. See config.py for all configurable values.
 """
 
 import argparse
+import logging
 import signal
 import sys
 import threading
 import time
 
+import config
+config.load_overrides()  # load config.json if it exists
+
 import db as dbmod
 import mesh as meshmod
 import server
+from health import HealthManager
+from alerts import AlertManager
+from messages import MessageRouter
+from missions import MissionManager
+from rover_mgr import RoverManager
+
+# ---- logging -----------------------------------------------------------
+logging.basicConfig(
+    level=getattr(logging, config.LOG_LEVEL, logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("main")
 
 
 def make_radio(fake):
@@ -29,32 +56,67 @@ def make_radio(fake):
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--fake-radio", action="store_true")
-    ap.add_argument("--port", type=int, default=8000)
-    ap.add_argument("--db", default="sar.db")
+    ap = argparse.ArgumentParser(description="SAR Command Centre — Phase 10")
+    ap.add_argument("--fake-radio", action="store_true",
+                    help="Use synthetic traffic instead of real SX1278 hardware")
+    ap.add_argument("--port", type=int, default=config.API_PORT)
+    ap.add_argument("--db", default=config.DB_PATH)
+    ap.add_argument("--log-level", default=config.LOG_LEVEL,
+                    choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = ap.parse_args()
 
-    database = dbmod.DB(args.db)
+    if args.log_level:
+        logging.getLogger().setLevel(getattr(logging, args.log_level))
 
+    # ---- database -------------------------------------------------------
+    database = dbmod.DB(args.db)
+    log.info("Database: %s", args.db)
+
+    # ---- alert manager (must exist before health/rover) -----------------
+    alert_mgr = AlertManager(database, publish_fn=server.publish)
+
+    # ---- mesh -----------------------------------------------------------
     def on_event(kind, data):
-        """Bridge: mesh -> database + dashboard live stream."""
+        """Bridge: mesh -> database + managers + dashboard live stream."""
         try:
             if kind == "hb":
                 database.node_seen(data["id"], rssi=data.get("rssi"), snr=data.get("snr"))
+                health_mgr.node_packet(data["id"], rssi=data.get("rssi"), snr=data.get("snr"))
             elif kind == "node":
                 if data["state"] == "lost":
                     database.node_offline(data["id"])
                 else:
                     database.node_seen(data["id"], rssi=data.get("rssi"), online=1)
+                    health_mgr.node_packet(data["id"], rssi=data.get("rssi"))
             elif kind == "pos":
                 database.node_seen(data["id"])
                 database.position(data["id"], data["lat"], data["lon"],
                                   data.get("src", 0), data.get("sats", 0))
+                health_mgr.node_packet(data["id"])
+                # Track GPS state
+                has_fix = data.get("lat", 0) != 0 or data.get("lon", 0) != 0
+                health_mgr.node_gps_update(data["id"], has_fix)
             elif kind == "sos":
                 database.sos(data["victim"], data["lat"], data["lon"], data["msg"])
+                alert_mgr.create("SOS", source=data["victim"],
+                                 message=f"SOS from {data['victim']}: {data.get('msg', '')}",
+                                 severity="EMERGENCY",
+                                 data={"lat": data["lat"], "lon": data["lon"]})
             elif kind == "message":
                 database.message(data["src"], "PI", data["text"], "in")
+                # Check if this is a tracked message (M:<id>:<text>)
+                text = data.get("text", "")
+                if text.startswith("M:") and ":" in text[2:]:
+                    parts = text[2:].split(":", 1)
+                    msg_id = parts[0]
+                    # Send MSGACK back
+                    m.send_data(data["src"],
+                                f"MSGACK:{msg_id}")
+            elif kind == "msgack":
+                # Message ACK received from a node
+                msg_id = data.get("msg_id", "")
+                if msg_router and msg_id:
+                    msg_router.ack_received(msg_id, ack_by=data.get("src", ""))
             elif kind == "report":
                 database.report(data["id"], data["code"], data["lat"],
                                 data["lon"], data.get("team", ""))
@@ -63,58 +125,76 @@ def main():
             elif kind == "rover":
                 database.node_seen(data["id"], rssi=data.get("rssi"))
                 database.rover(data["id"], data["mode"], data["obstacle"], data["battery"])
+                health_mgr.node_packet(data["id"], rssi=data.get("rssi"))
+                health_mgr.node_battery(data["id"], data.get("battery", -1))
+                # Update rover manager
+                rover_mgr.telemetry_update(
+                    data["id"], data["mode"],
+                    data["obstacle"], data["battery"],
+                    dist_m=data.get("dist_m", -1),
+                    heading_err=data.get("heading_err", -999),
+                    rssi=data.get("rssi"),
+                )
             elif kind == "route":
                 database.raw("route", data)
             database.raw(kind, data)
         except Exception as e:
-            print("on_event error:", e, file=sys.stderr)
+            log.error("on_event error: %s", e, exc_info=True)
         server.publish(kind, data)
 
     radio = make_radio(args.fake_radio)
     m = meshmod.Mesh(radio, on_event)
 
+    # ---- managers -------------------------------------------------------
+    health_mgr = HealthManager(database, publish_fn=server.publish)
+    msg_router = MessageRouter(database, m, alert_mgr, publish_fn=server.publish)
+    mission_mgr = MissionManager(database, publish_fn=server.publish)
+    rover_mgr = RoverManager(database, m, alert_mgr, publish_fn=server.publish)
+
+    # ---- wire into server -----------------------------------------------
     server.MESH = m
     server.DB = database
+    server.HEALTH = health_mgr
+    server.ALERTS = alert_mgr
+    server.MESSAGES = msg_router
+    server.MISSIONS = mission_mgr
+    server.ROVER = rover_mgr
 
+    # ---- start everything -----------------------------------------------
     try:
         m.start()
     except Exception as e:
+        log.critical("Radio failed to start: %s", e)
         print(f"\nRadio failed to start: {e}\n"
-              f"Wiring: see sx1278.py header. Or run with --fake-radio to test "
-              f"the dashboard without hardware.\n", file=sys.stderr)
+              f"Wiring: see sx1278.py header. Or run with --fake-radio.\n",
+              file=sys.stderr)
         sys.exit(1)
 
-    print(f"SAR Command Centre up.  dashboard: http://<pi-ip>:{args.port}/")
+    health_mgr.start()
+    msg_router.start()
+    rover_mgr.start()
 
-    # PHY box, printed the same way the ESP32 nodes print theirs at boot.
-    # These numbers MUST match the box on every node. A single mismatched
-    # spreading factor makes the Pi completely deaf to the mesh, and nothing
-    # reports an error - a radio that hears nothing looks exactly like a radio
-    # with nobody in range. The values are read from sx1278.py rather than
-    # written out here, so this can never drift from what the driver does.
+    log.info("=" * 60)
+    log.info("SAR Command Centre — Phase 10")
+    log.info("Dashboard: http://<pi-ip>:%d/", args.port)
+    log.info("API:       http://<pi-ip>:%d/api/state", args.port)
+    log.info("Portal:    http://<pi-ip>:%d/portal", args.port)
+    log.info("=" * 60)
+
     if args.fake_radio:
-        print("node id: PI   radio: FAKE (no hardware)")
+        log.info("Radio: FAKE (no hardware)")
     else:
         import sx1278 as _phy
-        print("############################################################")
-        print("#  RADIO PHY - MUST BE IDENTICAL ON ALL 3 NODES AND THE PI")
-        print(f"#     freq {_phy.FREQ_HZ} Hz    SF{_phy.SF}    "
-              f"BW {_phy.BW_HZ} Hz    CR 4/{_phy.CR_DENOM}")
-        print(f"#     sync 0x{_phy.SYNC_WORD:02X}    preamble {_phy.PREAMBLE}    "
-              f"CRC on    TX {_phy.TX_POWER_DBM} dBm")
-        print("#  Nodes must match: LORA_* in development/phase 7/Node *.md")
-        print("############################################################")
+        log.info("Radio PHY: freq=%d SF%d BW=%d CR4/%d sync=0x%02X TX=%ddBm",
+                 _phy.FREQ_HZ, _phy.SF, _phy.BW_HZ, _phy.CR_DENOM,
+                 _phy.SYNC_WORD, _phy.TX_POWER_DBM)
 
-    # SIGTERM (systemctl stop / kill, no -9) doesn't raise KeyboardInterrupt
-    # in the main thread by default - without this handler the process just
-    # dies mid-syscall and the RST GPIO is left claimed for the next run.
+    # SIGTERM handler
     def _on_term(signum, frame):
         raise KeyboardInterrupt
-
     signal.signal(signal.SIGTERM, _on_term)
 
-    # Trim old rows out of the SQLite store every 5 minutes. The mesh loop
-    # owns the DB lock so this has to run on a timer thread, not in on_event.
+    # DB trim timer
     last_trim = [0.0]
     def _trim_tick():
         while True:
@@ -125,23 +205,21 @@ def main():
             try:
                 database.trim()
             except Exception as e:
-                print("db trim error:", e, file=sys.stderr)
+                log.error("DB trim error: %s", e)
     threading.Thread(target=_trim_tick, daemon=True, name="db-trim").start()
 
     try:
-        # Flask dev server is fine for a single-viewer lab dashboard. For a
-        # few concurrent viewers use: waitress-serve --port 8000 --call server:app
         server.app.run(host="0.0.0.0", port=args.port, threaded=True,
                        use_reloader=False)
     except KeyboardInterrupt:
-        print("\nshutting down...")
+        log.info("Shutting down...")
     finally:
-        # MUST run on every exit path (Ctrl+C, systemctl stop, a crash in
-        # app.run) or the SX1278 RST GPIO stays claimed and the next launch
-        # fails with "Could not claim GPIO25". This used to sit unreachable
-        # below app.run() - a KeyboardInterrupt skipped straight past it.
+        health_mgr.stop()
+        msg_router.stop()
+        rover_mgr.stop()
         m.stop()
         radio.close()
+        log.info("Clean shutdown complete.")
 
 
 if __name__ == "__main__":
