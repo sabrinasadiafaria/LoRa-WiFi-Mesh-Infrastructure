@@ -3,148 +3,414 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SAR Command Centre</title>
-<meta name="theme-color" content="#0d1117">
+<title>SAR Command Centre — LoRa Mesh Infrastructure</title>
+<meta name="theme-color" content="#0b0f19">
 <link rel="stylesheet" href="leaflet/leaflet.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<!-- Active SOS banner - shows on top of everything when there is one -->
-<div id="sosbar" class="sos-alert hidden">
-  <span class="ic">SOS</span>
-  <span class="victim" id="sosvictim">--</span>
-  <span class="msg" id="sosmsg"></span>
-  <span class="coord" id="soscoord">--</span>
-</div>
-
+<!-- Sticky Header Bar -->
 <header class="topbar">
   <div class="brand">
     <div class="logo">SAR</div>
-    <div>
+    <div class="brand-text">
       <div class="title">Command Centre</div>
-      <div class="subtitle">LoRa-WiFi Mesh</div>
+      <div class="subtitle">LoRa-WiFi Self-Healing Mesh</div>
     </div>
   </div>
 
-  <div class="stat">
-    <span class="k">Mesh</span>
-    <span class="v" id="topbar-mesh">0 / 0</span>
-  </div>
-  <div class="stat">
-    <span class="k">Active SOS</span>
-    <span class="v" id="topbar-sos" style="color: var(--bad)">0</span>
-  </div>
-  <div class="stat">
-    <span class="k">Last update</span>
-    <span class="v" id="topbar-lastupdate">--</span>
+  <!-- Navigation View Tabs -->
+  <nav class="nav-tabs">
+    <button class="nav-tab active" data-view="overview">
+      <span class="tab-icon">🗺️</span> Overview
+    </button>
+    <button class="nav-tab" data-view="messages">
+      <span class="tab-icon">💬</span> Messages
+      <span class="tab-badge hidden" id="unread-msg-badge">0</span>
+    </button>
+    <button class="nav-tab" data-view="rover">
+      <span class="tab-icon">🏎️</span> Rover Console
+    </button>
+    <button class="nav-tab" data-view="logs">
+      <span class="tab-icon">📋</span> Activity Logs
+    </button>
+  </nav>
+
+  <div class="topbar-stats">
+    <div class="stat">
+      <span class="k">Mesh Nodes</span>
+      <span class="v" id="topbar-mesh">0 / 0</span>
+    </div>
+    <div class="stat">
+      <span class="k">Active SOS</span>
+      <span class="v bad" id="topbar-sos">0</span>
+    </div>
+    <div class="stat">
+      <span class="k">Last Sync</span>
+      <span class="v" id="topbar-lastupdate">--:--:--</span>
+    </div>
   </div>
 
-  <div class="right">
+  <div class="topbar-right">
     <span class="pill live" id="link"><span class="dot"></span><span id="linktxt">live</span></span>
     <span class="clock" id="clock">--:--:--</span>
   </div>
 </header>
 
-<main class="grid">
+<!-- Emergency SOS Alert Banner -->
+<div id="sosbar" class="sos-alert hidden">
+  <div class="sos-alert-content">
+    <span class="sos-badge">🚨 SOS MAYDAY</span>
+    <span class="victim" id="sosvictim">--</span>
+    <span class="msg" id="sosmsg">MAYDAY EMERGENCY</span>
+    <span class="coord" id="soscoord">--</span>
+  </div>
+  <div class="sos-alert-actions">
+    <button class="btn-sos-action btn-locate" id="btn-sos-locate">📍 Focus Map</button>
+    <button class="btn-sos-action btn-clear" id="btn-sos-clear">✓ Clear SOS</button>
+  </div>
+</div>
 
-  <!-- Top-left: nodes map -->
-  <section class="panel" id="map-panel">
-    <div class="panel-head">
-      <h2>Nodes Map</h2>
-      <span class="badge" id="map-badge">0 markers</span>
-    </div>
-    <div class="panel-body no-pad"><div id="map"></div></div>
-  </section>
+<!-- Toast Notification Container -->
+<div id="toast-container" class="toast-container"></div>
 
-  <!-- Top-right: live telemetry -->
-  <section class="panel" id="tel-panel">
-    <div class="panel-head">
-      <h2>Live Telemetry</h2>
-      <span class="badge" id="tel-badge">0 nodes</span>
-    </div>
-    <div class="panel-body">
-      <div class="tel-list" id="tel-list"></div>
-    </div>
-  </section>
+<!-- View Container -->
+<div class="views-wrapper">
 
-  <!-- Bottom-left: recent activity -->
-  <section class="panel" id="act-panel">
-    <div class="panel-head">
-      <h2>Recent Activity</h2>
-      <span class="badge" id="act-badge">last hour</span>
-    </div>
-    <div class="panel-body">
-      <div class="feed" id="feed"></div>
-    </div>
-  </section>
-
-  <!-- Bottom-right: MESSAGES (replaces old Team Status) -->
-  <section class="panel" id="msg-panel">
-    <div class="panel-head">
-      <h2>Messages</h2>
-      <span class="badge" id="msg-badge">0 messages</span>
-    </div>
-    <div class="panel-body msg-panel-body">
-      <!-- Conversation area -->
-      <div class="msg-conversation" id="msg-conversation">
-        <div class="msg-empty">No messages yet</div>
-      </div>
-      <!-- Compose area -->
-      <div class="msg-compose">
-        <div class="msg-compose-row">
-          <select id="msg-dest" class="msg-dest-select">
-            <option value="A">→ A</option>
-            <option value="B">→ B</option>
-            <option value="C">→ C</option>
-            <option value="R">→ R</option>
-            <option value="*" selected>→ * (all)</option>
-          </select>
-          <div class="msg-char-info">
-            <span id="msg-charcount">0</span><span class="msg-charlimit">/100</span>
-            <span id="msg-chunkinfo" class="msg-chunkinfo"></span>
+  <!-- ==================== VIEW 1: OVERVIEW ==================== -->
+  <section id="view-overview" class="view-panel active">
+    <div class="dashboard-grid">
+      
+      <!-- Top-Left: Map Panel -->
+      <div class="panel card-map">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="icon">🗺️</span>
+            <h2>Nodes Map & GIS</h2>
+          </div>
+          <div class="panel-actions">
+            <button class="btn-sm" id="btn-recenter-map">Recenter Map</button>
+            <button class="btn-sm toggle-rover-drawer" id="btn-toggle-map-rover">🏎️ Rover Drawer</button>
+            <span class="badge" id="map-badge">0 markers</span>
           </div>
         </div>
-        <div class="msg-compose-row">
-          <input type="text" id="msg-text" class="msg-input" placeholder="Type a message…" maxlength="500" autocomplete="off">
-          <button id="msg-send" class="msg-send-btn">Send</button>
+        <div class="panel-body no-pad map-container-relative">
+          <div id="map"></div>
+          
+          <!-- Collapsible Map Side-Drawer for Rover Quick Control -->
+          <div id="map-rover-drawer" class="map-rover-drawer hidden">
+            <div class="drawer-header">
+              <h3>🏎️ Quick Rover Control</h3>
+              <button class="btn-close-drawer" id="btn-close-map-rover">&times;</button>
+            </div>
+            <div class="drawer-body">
+              <div class="rover-mini-telemetry" id="map-rover-telem">
+                <span class="tag">Status: <strong id="m-rover-status">OFFLINE</strong></span>
+                <span class="tag">Battery: <strong id="m-rover-batt">--</strong></span>
+              </div>
+              <div class="dpad-compact">
+                <button class="dbtn up" data-verb="FWD">&uarr;</button>
+                <div class="dpad-mid">
+                  <button class="dbtn left" data-verb="LEFT">&larr;</button>
+                  <button class="dbtn stop" data-verb="STOP">&#9632;</button>
+                  <button class="dbtn right" data-verb="RIGHT">&rarr;</button>
+                </div>
+                <button class="dbtn down" data-verb="BACK">&darr;</button>
+              </div>
+              <div class="mode-select-compact">
+                <button data-mode="MANUAL" class="mbtn active">MANUAL</button>
+                <button data-mode="AUTO" class="mbtn">AUTO</button>
+                <button data-mode="RELAY" class="mbtn">RELAY</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top-Right: Live Telemetry -->
+      <div class="panel card-telemetry">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="icon">📡</span>
+            <h2>Live Telemetry & Nodes</h2>
+          </div>
+          <span class="badge" id="tel-badge">0 nodes</span>
+        </div>
+        <div class="panel-body">
+          <div class="tel-list" id="tel-list"></div>
+        </div>
+      </div>
+
+      <!-- Bottom-Left: Activity Stream -->
+      <div class="panel card-activity">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="icon">⚡</span>
+            <h2>Recent Activity Feed</h2>
+          </div>
+          <span class="badge" id="act-badge">0 events</span>
+        </div>
+        <div class="panel-body">
+          <div class="feed" id="feed"></div>
+        </div>
+      </div>
+
+      <!-- Bottom-Right: Quick Messages -->
+      <div class="panel card-messages">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="icon">💬</span>
+            <h2>Mesh Messages</h2>
+          </div>
+          <span class="badge" id="msg-badge">0 messages</span>
+        </div>
+        <div class="panel-body msg-panel-body">
+          <div class="msg-conversation" id="msg-conversation">
+            <div class="msg-empty">No messages yet — send one below</div>
+          </div>
+          <div class="msg-compose">
+            <div class="msg-compose-row">
+              <select id="msg-dest" class="msg-dest-select">
+                <option value="A">→ Node A</option>
+                <option value="B">→ Node B</option>
+                <option value="C">→ Node C</option>
+                <option value="R">→ Rover R</option>
+                <option value="*" selected>→ * Broadcast (All)</option>
+              </select>
+              <div class="msg-char-info">
+                <span id="msg-charcount">0</span><span class="msg-charlimit">/100</span>
+                <span id="msg-chunkinfo" class="msg-chunkinfo"></span>
+              </div>
+            </div>
+            <div class="msg-compose-row">
+              <input type="text" id="msg-text" class="msg-input" placeholder="Type a mesh message..." maxlength="500" autocomplete="off">
+              <button id="msg-send" class="msg-send-btn">Send</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ==================== VIEW 2: MESSAGES CENTER ==================== -->
+  <section id="view-messages" class="view-panel">
+    <div class="full-view-container">
+      <div class="panel messages-full-panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="icon">💬</span>
+            <h2>Mesh Tactical Messaging Workspace</h2>
+          </div>
+          <div class="panel-actions">
+            <span class="badge" id="full-msg-badge">0 messages</span>
+          </div>
+        </div>
+        <div class="messages-workspace">
+          
+          <!-- Recipient Selector Sidebar -->
+          <div class="msg-sidebar">
+            <h3>Recipients</h3>
+            <div class="recipient-list">
+              <button class="recipient-item active" data-dest="*">
+                <span class="badge-id bg-all">*</span>
+                <div class="info">
+                  <div class="name">Broadcast (All)</div>
+                  <div class="sub">Mesh-wide broadcast</div>
+                </div>
+              </button>
+              <button class="recipient-item" data-dest="A">
+                <span class="badge-id bg-a">A</span>
+                <div class="info">
+                  <div class="name">Node A</div>
+                  <div class="sub">Field Rescuer / Leader</div>
+                </div>
+              </button>
+              <button class="recipient-item" data-dest="B">
+                <span class="badge-id bg-b">B</span>
+                <div class="info">
+                  <div class="name">Node B</div>
+                  <div class="sub">Field Rescuer</div>
+                </div>
+              </button>
+              <button class="recipient-item" data-dest="C">
+                <span class="badge-id bg-c">C</span>
+                <div class="info">
+                  <div class="name">Node C</div>
+                  <div class="sub">Field Rescuer</div>
+                </div>
+              </button>
+              <button class="recipient-item" data-dest="R">
+                <span class="badge-id bg-r">R</span>
+                <div class="info">
+                  <div class="name">Rover R</div>
+                  <div class="sub">Search Rover</div>
+                </div>
+              </button>
+            </div>
+
+            <!-- Quick Presets -->
+            <div class="presets-section">
+              <h3>Quick Presets</h3>
+              <div class="presets-grid">
+                <button class="btn-preset" data-text="STATUS REPORT">Status Report</button>
+                <button class="btn-preset" data-text="LOCATION UPDATE">Location Update</button>
+                <button class="btn-preset" data-text="RETURN TO BASE">Return to Base</button>
+                <button class="btn-preset" data-text="VICTIM LOCATED">Victim Located</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chat Conversation Main Area -->
+          <div class="msg-main">
+            <div class="msg-main-header">
+              <span class="current-target-title">Target: <strong id="full-target-name">Broadcast (All)</strong></span>
+            </div>
+            <div class="msg-conversation full-conversation" id="full-msg-conversation">
+              <div class="msg-empty">No messages recorded</div>
+            </div>
+            <div class="msg-compose full-compose">
+              <div class="msg-compose-row">
+                <div class="msg-char-info">
+                  <span id="full-msg-charcount">0</span><span class="msg-charlimit">/100</span>
+                  <span id="full-msg-chunkinfo" class="msg-chunkinfo"></span>
+                </div>
+              </div>
+              <div class="msg-compose-row">
+                <input type="text" id="full-msg-text" class="msg-input" placeholder="Type a message to send over LoRa..." maxlength="500" autocomplete="off">
+                <button id="full-msg-send" class="msg-send-btn">Send Message</button>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
   </section>
 
-</main>
+  <!-- ==================== VIEW 3: ROVER CONSOLE ==================== -->
+  <section id="view-rover" class="view-panel">
+    <div class="full-view-container">
+      <div class="panel rover-full-panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="icon">🏎️</span>
+            <h2>Search & Rescue Rover R Command Console</h2>
+          </div>
+          <span class="badge" id="rover-status-badge">Checking connection...</span>
+        </div>
+        <div class="rover-dashboard-grid">
 
-<!-- Rover floating panel - hidden until a rover has reported in -->
-<div class="rover-fab" id="rover-fab">
-  <h3><span style="color: var(--acc)">R</span> Rover</h3>
-  <div class="pills" id="rover-pills"></div>
-  <div class="mode">
-    <button data-mode="MANUAL" id="rmode-MANUAL">MANUAL</button>
-    <button data-mode="AUTO"   id="rmode-AUTO">AUTO</button>
-    <button data-mode="RELAY"  id="rmode-RELAY">RELAY</button>
-  </div>
-  <div class="dpad">
-    <button class="up"    data-verb="FWD">&uarr;</button>
-    <button class="left"  data-verb="LEFT">&larr;</button>
-    <button class="mid stop" data-verb="STOP">&#9632;</button>
-    <button class="right" data-verb="RIGHT">&rarr;</button>
-    <button class="down"  data-verb="BACK">&darr;</button>
-  </div>
-  <div class="goto">
-    <div class="goto-title">Send rover to address</div>
-    <div class="goto-row">
-      <label>lat <input id="goto-lat" inputmode="decimal" placeholder="23.687750"></label>
-      <label>lon <input id="goto-lon" inputmode="decimal" placeholder="90.432100"></label>
-      <button id="goto-go">Go</button>
+          <!-- Telemetry & Status Cards -->
+          <div class="rover-card rover-telemetry-card">
+            <h3>Telemetry & Health</h3>
+            <div class="rover-metrics">
+              <div class="metric-box">
+                <span class="label">Operating Mode</span>
+                <span class="value val-mode" id="r-val-mode">MANUAL</span>
+              </div>
+              <div class="metric-box">
+                <span class="label">Battery Status</span>
+                <span class="value val-batt" id="r-val-batt">-- %</span>
+              </div>
+              <div class="metric-box">
+                <span class="label">Obstacle Sensor</span>
+                <span class="value val-obs" id="r-val-obs">-- cm</span>
+              </div>
+              <div class="metric-box">
+                <span class="label">Last Heartbeat</span>
+                <span class="value val-age" id="r-val-age">--</span>
+              </div>
+            </div>
+
+            <!-- Mode Controls -->
+            <div class="rover-mode-select">
+              <h4>Select Mode</h4>
+              <div class="mode-btns">
+                <button data-mode="MANUAL" class="btn-mode active" id="rmode-full-MANUAL">🎮 MANUAL</button>
+                <button data-mode="AUTO" class="btn-mode" id="rmode-full-AUTO">🤖 AUTO (GPS Waypoint)</button>
+                <button data-mode="RELAY" class="btn-mode" id="rmode-full-RELAY">📡 RELAY STATION</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Manual Drive D-Pad -->
+          <div class="rover-card rover-dpad-card">
+            <h3>Manual Drive Controls</h3>
+            <p class="hint">Hold direction to drive continuous pulses. Releases automatically stop the rover.</p>
+            <div class="dpad-full">
+              <button class="dbtn-full up" data-verb="FWD">▲<br>FORWARD</button>
+              <div class="dpad-full-mid">
+                <button class="dbtn-full left" data-verb="LEFT">◄<br>LEFT</button>
+                <button class="dbtn-full stop" data-verb="STOP">■<br>STOP</button>
+                <button class="dbtn-full right" data-verb="RIGHT">►<br>RIGHT</button>
+              </div>
+              <button class="dbtn-full down" data-verb="BACK">▼<br>BACKWARD</button>
+            </div>
+          </div>
+
+          <!-- Waypoint Navigation -->
+          <div class="rover-card rover-goto-card">
+            <h3>Autonomous Waypoint Target</h3>
+            <p class="sub">Set latitude and longitude targets for Rover AUTO mode.</p>
+            <div class="goto-form">
+              <div class="form-row">
+                <label>Latitude
+                  <input type="text" id="full-goto-lat" placeholder="23.687750" inputmode="decimal">
+                </label>
+                <label>Longitude
+                  <input type="text" id="full-goto-lon" placeholder="90.432100" inputmode="decimal">
+                </label>
+              </div>
+              <div class="form-actions">
+                <button class="btn-primary" id="full-goto-go">🚀 Dispatch Target</button>
+                <button class="btn-secondary" id="full-goto-clr">❌ Cancel Target</button>
+              </div>
+              <div class="goto-status-box" id="full-goto-status">Target status: idle</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
     </div>
-    <div class="goto-row">
-      <button id="goto-clr" class="link">Cancel current target</button>
+  </section>
+
+  <!-- ==================== VIEW 4: ACTIVITY & SYSTEM LOGS ==================== -->
+  <section id="view-logs" class="view-panel">
+    <div class="full-view-container">
+      <div class="panel logs-full-panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="icon">📋</span>
+            <h2>System Activity & Mission Logs</h2>
+          </div>
+          <div class="panel-actions">
+            <input type="text" id="logs-search" class="logs-search-input" placeholder="Search logs...">
+            <button class="btn-sm" id="btn-export-logs">📥 Export Logs</button>
+          </div>
+        </div>
+        <div class="logs-workspace">
+          <!-- Log Filter Bar -->
+          <div class="logs-filter-bar">
+            <button class="log-filter-btn active" data-filter="all">All Events</button>
+            <button class="log-filter-btn" data-filter="sos">🚨 SOS Alerts</button>
+            <button class="log-filter-btn" data-filter="msg">💬 Messages</button>
+            <button class="log-filter-btn" data-filter="report">📊 Rescue Reports</button>
+            <button class="log-filter-btn" data-filter="command">⚙️ Commands</button>
+            <button class="log-filter-btn" data-filter="telemetry">📡 Telemetry</button>
+          </div>
+          <!-- Logs Table / Feed -->
+          <div class="logs-feed-container">
+            <div class="logs-feed" id="logs-feed">
+              <div class="feed-row empty">Loading mission logs...</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
-    <div class="goto-status" id="goto-status">tap the map to drop a pin, or type coords</div>
-  </div>
-  <div class="hint">Hold a direction - it re-sends every 400 ms; release or
-    lose the connection and the rover auto-stops within ~600 ms on its own.</div>
+  </section>
+
 </div>
 
 <script src="leaflet/leaflet.js"></script>

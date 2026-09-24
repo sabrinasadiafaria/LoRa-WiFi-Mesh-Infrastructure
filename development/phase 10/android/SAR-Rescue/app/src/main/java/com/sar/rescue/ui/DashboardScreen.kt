@@ -11,6 +11,7 @@ import com.sar.rescue.api.RetrofitClient
 import com.sar.rescue.api.StateResponse
 import com.sar.rescue.api.StatusResponse
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun DashboardScreen() {
@@ -19,6 +20,7 @@ fun DashboardScreen() {
     var isFallback by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var connectionTarget by remember { mutableStateOf("") }
+    val coroutineScope = rememberCoroutineScope()
     
     LaunchedEffect(Unit) {
         while (true) {
@@ -91,7 +93,7 @@ fun DashboardScreen() {
         // SOS button
         Button(
             onClick = {
-                kotlinx.coroutines.MainScope().launch {
+                coroutineScope.launch {
                     try { RetrofitClient.api.sendSos() } catch (e: Exception) {}
                 }
             },
@@ -177,4 +179,4 @@ fun DashboardScreen() {
     }
 }
 
-private fun kotlinx.coroutines.MainScope() = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main)
+

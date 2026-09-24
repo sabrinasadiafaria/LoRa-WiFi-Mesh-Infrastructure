@@ -172,6 +172,19 @@ def api_sos():
     return jsonify(ok=True)
 
 
+@app.route("/api/clear_sos", methods=["POST"])
+def api_clear_sos():
+    body = request.get_json(force=True, silent=True) or {}
+    victim = body.get("victim", "").strip().upper()
+    if not victim:
+        return jsonify(ok=False, error="victim required"), 400
+    DB.sos_clear(victim)
+    if MESH and victim in {"A", "B", "C", "R", "*"}:
+        MESH.send_cmd(victim, "SOSCLR", "")
+    publish("sos_clear", {"victim": victim})
+    return jsonify(ok=True)
+
+
 @app.route("/api/loc", methods=["GET", "POST"])
 def api_loc():
     # The Pi has no GPS, so a phone-portal location update can only be
