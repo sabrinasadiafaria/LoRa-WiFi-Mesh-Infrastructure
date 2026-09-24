@@ -1,7 +1,8 @@
 import os
 
-src_dir = r"c:\Users\Lenovo\Documents\GitHub\LoRa-WiFi-Mesh-Infrastructure\development\phase 9"
-dst_dir = r"c:\Users\Lenovo\Documents\GitHub\LoRa-WiFi-Mesh-Infrastructure\development\phase 10\nodes"
+script_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.abspath(os.path.join(script_dir, "..", "..", "phase 9"))
+dst_dir = script_dir
 
 for name, nid in [("Node A", "A"), ("Node B", "B"), ("Node C", "C")]:
     src = os.path.join(src_dir, f"{name}.md")
@@ -49,7 +50,8 @@ for name, nid in [("Node A", "A"), ("Node B", "B"), ("Node C", "C")]:
   }
   statPrev = statCurr;
 """
-    content = content.replace("  sosPrev = sosCurr;\n}", "  sosPrev = sosCurr;\n" + stat_btn_logic + "\n}")
+    content = content.replace("    else          sosTrigger(\"BUTTON-HOLD\");\n  }\n}",
+                              "    else          sosTrigger(\"BUTTON-HOLD\");\n  }\n" + stat_btn_logic + "\n}")
     
     with open(dst, "w", encoding="utf-8") as f:
         f.write(content)
