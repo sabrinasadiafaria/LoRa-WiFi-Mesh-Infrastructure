@@ -264,6 +264,9 @@ void parseIncomingLoRa() {
     int secondPipe = incoming.indexOf('|', firstPipe + 1);
     int thirdPipe = incoming.indexOf('|', secondPipe + 1);
     int fourthPipe = incoming.indexOf('|', thirdPipe + 1);
+    int fifthPipe = incoming.indexOf('|', fourthPipe + 1);
+    int sixthPipe = incoming.indexOf('|', fifthPipe + 1);
+    int seventhPipe = incoming.indexOf('|', sixthPipe + 1);
 
     String ptype = incoming.substring(firstPipe + 1, secondPipe);
     String src = incoming.substring(secondPipe + 1, thirdPipe);
@@ -272,7 +275,11 @@ void parseIncomingLoRa() {
     if (dest == NODE_ID || dest == "*") {
       playMsgRxChirp();
       lastRxSrc = src;
-      lastRxMsg = ptype;
+      if (ptype == "DATA") {
+        lastRxMsg = incoming.substring(sixthPipe + 1, seventhPipe);
+      } else {
+        lastRxMsg = ptype;
+      }
       updateOled();
     }
   }

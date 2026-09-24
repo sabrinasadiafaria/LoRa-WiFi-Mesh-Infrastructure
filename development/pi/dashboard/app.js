@@ -6,7 +6,7 @@ const LORA_MAX_TEXT = 100;
 const DEFAULT_CENTER = [23.7979, 90.4497];
 
 // Leaflet Map Initialization
-const map = L.map('map', { zoomControl: true, attributionControl: true })
+const map = L.map('map', { zoomControl: true, attributionControl: true, scrollWheelZoom: false })
               .setView(DEFAULT_CENTER, 13);
 
 L.tileLayer('/tiles/{z}/{x}/{y}.png', {
