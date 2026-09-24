@@ -55,6 +55,12 @@ Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET);
 TinyGPSPlus gps;
 HardwareSerial gpsSerial(2);
 
+// Captive Portal
+WebServer server(80);
+DNSServer dns;
+IPAddress apIP(192, 168, 4, 1);
+const char* AP_SSID = "SOS_Node_A";
+
 // State Variables
 bool isSosActive = false;
 String currentStatus = "AVAILABLE"; // AVAILABLE, SEARCHING, VICTIM_FOUND, NEED_ASSIST
@@ -67,6 +73,79 @@ bool statBtnPrevState = HIGH;
 int msgCount = 0;
 String lastRxMsg = "";
 String lastRxSrc = "";
+String peersJson = "[]"; // simple peer tracking for portal
+
+const char PORTAL_HTML[] PROGMEM =
+  "<!DOCTYPE html><html lang=\"en\"><head>"
+  "<meta charset=\"utf-8\">"
+  "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"
+  "<title>SAR Rescue Portal</title><style>"
+  "*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}"
+  "body{margin:0;padding:0 0 28px;font:15px/1.45 system-ui,-apple-system,sans-serif;"
+  "background:#0b0d10;color:#e8edf3}"
+  ".wrap{max-width:640px;margin:0 auto;padding:0 14px}"
+  "header{position:sticky;top:0;z-index:20;background:rgba(11,13,16,.94);"
+  "border-bottom:1px solid #252d38;padding:12px 0 10px}"
+  ".card{background:#151a21;border:1px solid #252d38;border-radius:14px;padding:14px;margin-top:12px}"
+  "button{font:inherit;border:0;border-radius:11px;padding:13px;font-weight:650;"
+  "cursor:pointer;width:100%}"
+  ".sos{background:linear-gradient(135deg,#ff3b3b,#c81e1e);color:#fff;font-size:18px}"
+  ".sec{background:#1b222b;color:#e8edf3;border:1px solid #252d38;margin-top:8px}"
+  ".big{font-size:21px;font-family:monospace;font-weight:600}"
+  "</style></head><body>"
+  "<div class=\"wrap\">"
+  "<header><h1>Rescue Portal</h1><div id=\"sub\">Node " NODE_ID "</div></header>"
+  "<div class=\"card\" style=\"text-align:center\">"
+  "<button class=\"sos\" onclick=\"fetch('/api/sos')\">SEND SOS</button>"
+  "</div>"
+  "<div class=\"card\">"
+  "<div>This node's position</div>"
+  "<div class=\"big\" id=\"pos\">--</div>"
+  "</div>"
+  "<div class=\"card\">"
+  "<div>Team status <span id=\"mystat\">--</span></div>"
+  "  <button class=\"sec\" onclick=\"fetch('/api/teamstatus?state=AVAILABLE')\">Available</button>"
+  "  <button class=\"sec\" onclick=\"fetch('/api/teamstatus?state=SEARCHING')\">Searching</button>"
+  "  <button class=\"sec\" onclick=\"fetch('/api/teamstatus?state=NEED_ASSIST')\">Need Assist</button>"
+  "  <button class=\"sec\" onclick=\"fetch('/api/teamstatus?state=EMERGENCY')\">Emergency</button>"
+  "</div>"
+  "</div>"
+  "<script>"
+  "function tick(){"
+  " fetch('/api/status').then(r=>r.json()).then(d=>{"
+  "   document.getElementById('pos').textContent = (d.gpsfix ? d.lat.toFixed(6)+', '+d.lon.toFixed(6) : 'no fix');"
+  "   document.getElementById('mystat').textContent = d.mystatus;"
+  " });"
+  "}"
+  "setInterval(tick,2000); tick();"
+  "</script></body></html>";
+
+void handlePortal() { server.send_P(200, "text/html", PORTAL_HTML); }
+void handleStatus() {
+  char json[300];
+  snprintf(json, sizeof(json), 
+           "{\"id\":\"%s\",\"gpsfix\":%d,\"lat\":%.6f,\"lon\":%.6f,\"mystatus\":\"%s\"}",
+           NODE_ID, gps.location.isValid() ? 1 : 0, gps.location.lat(), gps.location.lng(), currentStatus.c_str());
+  server.send(200, "application/json", json);
+}
+void handleSos() {
+  isSosActive = !isSosActive;
+  if(isSosActive) {
+    sendLoRaFrame(buildPacket("SOS", "*", "MAYDAY EMERGENCY"));
+    playSosTonePattern();
+  } else {
+    sendLoRaFrame(buildPacket("CMD", "*", "SOSCLR"));
+  }
+  server.send(200, "text/plain", "SOS toggled");
+}
+void handleTeamStatus() {
+  if (server.hasArg("state")) {
+    currentStatus = server.arg("state");
+    sendLoRaFrame(buildPacket("STAT", "PI", currentStatus));
+    updateOled();
+  }
+  server.send(200, "text/plain", "Status updated");
+}
 
 // Non-blocking Tone Helper
 void playBuzzerTone(int freq, int durationMs) {
@@ -142,7 +221,7 @@ void updateOled() {
     display.print("Sats: "); display.println(gps.satellites.value());
   } else {
     display.println("GPS: Searching...");
-    display.print("Fix: NO FIX (Bench)");
+    display.print("Fix: NO FIX");
   }
 
   // Last Message
@@ -191,6 +270,19 @@ void setup() {
   LoRa.setCodingRate4(LORA_CR);
   LoRa.setSyncWord(LORA_SYNC);
   LoRa.enableCrc();
+
+  // Captive Portal setup
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+  WiFi.softAP(AP_SSID);
+  dns.start(53, "*", apIP);
+  
+  server.on("/", handlePortal);
+  server.on("/api/status", handleStatus);
+  server.on("/api/sos", handleSos);
+  server.on("/api/teamstatus", handleTeamStatus);
+  server.onNotFound(handlePortal); // redirect all
+  server.begin();
 
   playGpsLockChirp();
   updateOled();
@@ -289,6 +381,8 @@ void loop() {
   while (gpsSerial.available()) {
     gps.encode(gpsSerial.read());
   }
+  dns.processNextRequest();
+  server.handleClient();
 
   handleButtons();
   parseIncomingLoRa();
