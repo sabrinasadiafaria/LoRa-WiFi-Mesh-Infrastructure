@@ -1,41 +1,55 @@
 """
-The Pi as a mesh node — Phase 10.
+The Pi as a mesh node.
 
-This is the Phase 9 mesh.py with the following additions:
-  - MSGACK packet type: received when a node acknowledges a tracked message
-  - on_event callback extended to support 'msgack' event kind
-  - No protocol version bump needed: v1 already ignores unknown types
+Implements the same wire protocol as development/phase 4/*.md:
 
-All Phase 9 behavior is preserved exactly. The wire format is unchanged.
+    v<VER>|<TYPE>|<SRC>|<DEST>|<MSGID>|<TTL>|<PAYLOAD>|<CHK>
+
+and the same behaviour: heartbeat, distance-vector routing with split
+horizon, multi-hop forwarding with a seen-ID cache, and self-healing route
+expiry. The Pi's node id is "PI".
+
+Nodes reach the Pi directly if in range, or multi-hop (C -> B -> A -> PI).
+The Pi reaches nodes the same way in reverse. Commands from the dashboard
+go out as CMD packets.
+
+Performance notes (Phase 9+):
+  - TX queue is now priority-ordered, not FIFO. A held-button stream of
+    CMD:FWD pulses can no longer stall behind a routine HB.
+  - HB / RT rates are slightly slower than the nodes so the Pi doesn't
+    dominate the airtime budget on the gateway side of the link.
+  - TX_MIN_GAP is shorter for priority traffic; periodic broadcasts still
+    carry the anti-collision jitter.
 """
 
 import time
 import threading
 import random
 
-import config
+PROTO_VERSION = 1
+MY_ID = "PI"
 
-PROTO_VERSION = config.PROTO_VERSION
-MY_ID = config.MY_ID
+# match the ESP32 constants (development/phase 7/Node *.md)
+HB_INTERVAL = 25.0
+RT_INTERVAL = 45.0
+NEIGHBOR_TIMEOUT = 75.0
+ROUTE_TIMEOUT = 120.0
+MAX_HOPS = 4
+TX_MIN_GAP = 0.10
+SEEN_CACHE = 64
 
-# match the ESP32 constants
-HB_INTERVAL = config.HB_INTERVAL_S
-RT_INTERVAL = config.RT_INTERVAL_S
-NEIGHBOR_TIMEOUT = config.NEIGHBOR_TIMEOUT_S
-ROUTE_TIMEOUT = config.ROUTE_TIMEOUT_S
-MAX_HOPS = config.MAX_HOPS
-TX_MIN_GAP = config.TX_MIN_GAP_S
-SEEN_CACHE = config.SEEN_CACHE_SIZE
-
-FORWARDABLE = {"DATA", "SOS", "SOSACK", "RPT", "CMD", "MSGACK"}
+FORWARDABLE = {"DATA", "SOS", "SOSACK", "RPT", "CMD"}
 CONSUMED_NO_FWD = {"HB", "RT", "GPS", "STAT", "ROVER"}
 
-PRI_CMD     = 0
-PRI_SOS     = 0
-PRI_RPT     = 1
-PRI_DATA    = 2
-PRI_FWD     = 3
-PRI_PERIODIC = 4
+# Lower number = higher priority. The TX worker always sends the lowest-
+# priority-numbered frame in the queue. Periodic housekeeping is the
+# highest number so a manual drive burst or a fresh SOS can overtake it.
+PRI_CMD     = 0    # drive / mode / goto / where / ping / sos / sosclr
+PRI_SOS     = 0    # SOSACK generated on receive shares the CMD lane
+PRI_RPT     = 1    # rescue report (one tap on the portal)
+PRI_DATA    = 2    # text messages
+PRI_FWD     = 3    # forwarded packets from neighbours
+PRI_PERIODIC = 4   # HB, RT, GPS, STAT, ROVER - whatever the node decides to send
 
 
 def checksum(s: str) -> int:
@@ -99,14 +113,14 @@ class Mesh:
 
     def __init__(self, radio, on_event):
         self.radio = radio
-        self.on_event = on_event
+        self.on_event = on_event            # on_event(kind:str, data:dict)
         self._msgid = 0
         self._seen = []
         self._txq = []
         self._last_tx = 0.0
         self._lock = threading.Lock()
-        self.neighbors = {}
-        self.routes = {}
+        self.neighbors = {}                 # id -> {rssi, snr, last, uptime, heap}
+        self.routes = {}                    # dest -> {via, hops, last, valid}
         self._stop = threading.Event()
         self._hb_at = 0.0
         self._rt_at = 0.0
@@ -126,7 +140,7 @@ class Mesh:
         return self._msgid
 
     def send_data(self, dest, text):
-        text = sanitize(text)[:config.MSG_MAX_LENGTH]
+        text = sanitize(text)[:120]
         self._enqueue(build("DATA", MY_ID, dest, self.next_msgid(), MAX_HOPS, text),
                       pri=PRI_DATA)
         return True
@@ -156,11 +170,19 @@ class Mesh:
 
     # ---- internals --------------------------------------------------
     def _enqueue(self, frame: bytes, pri: int = PRI_PERIODIC):
+        """Append a frame to the TX queue with a priority. Lower pri = sent
+        first. The TX worker selects the smallest-pri frame in O(N) every
+        tick - cheap at queue sizes up to a few dozen and correct under
+        any insertion order. The previous FIFO behaviour silently starved
+        drive commands behind a routine HB during a manual burst."""
         with self._lock:
             if len(self._txq) < 24:
                 self._txq.append((pri, frame))
 
     def _seen_forget(self, src):
+        """Drop a node's cached ids. A node that rebooted restarts its msgId
+        at 1, and its old ids sitting in the ring would filter the fresh
+        packets as duplicates - which is how a returning node stayed lost."""
         self._seen = [k for k in self._seen if k[0] != src]
 
     def _seen_or_add(self, src, msgid):
@@ -202,11 +224,17 @@ class Mesh:
                 self.on_event("node", {"id": nid, "state": "lost"})
 
     def _send_hb(self):
+        # uptime only - the heap field was unused on every reader and the
+        # fwver was a constant (always 6) that only took up airtime.
         payload = f"{int(time.time())}"
         self._enqueue(build("HB", MY_ID, "*", self.next_msgid(), 0, payload),
                       pri=PRI_PERIODIC)
 
     def _send_rt(self):
+        # Compact RT: drop the hop count when hops==1 (the common case for a
+        # direct neighbour), drop the trailing semicolon, drop routes that
+        # haven't been refreshed. The receiver still tolerates the old
+        # 3-field form so this is backwards compatible.
         entries = []
         for dest, r in self.routes.items():
             if r["valid"]:
@@ -225,13 +253,23 @@ class Mesh:
         with self._lock:
             if not self._txq:
                 return
+            # Pick the highest-priority frame. Stable: ties resolve to
+            # FIFO so a fast burst of CMDs still goes in order.
             self._txq.sort(key=lambda t: t[0])
             _, frame = self._txq.pop(0)
+        # Only update _last_tx if the radio actually accepted the frame.
+        # A failed TX must not consume the airtime budget or back-off retries
+        # further than the jitter already added - otherwise a wedged radio
+        # would silently slow every subsequent transmission to a crawl.
         ok = self.radio.send(frame)
         if not ok:
             return
+        # Smaller jitter for priority traffic (CMD/RPT/DATA), larger
+        # for periodic (HB/RT/GPS). The jitter on periodic broadcasts
+        # is the only thing keeping four simultaneous beacons from
+        # colliding every interval.
         ptype = frame.split(b"|", 2)[1].decode("ascii", "replace")
-        if ptype in ("CMD", "RPT", "DATA", "SOSACK", "MSGACK"):
+        if ptype in ("CMD", "RPT", "DATA", "SOSACK"):
             self._last_tx = time.time() + random.uniform(0, 0.05)
         else:
             self._last_tx = time.time() + random.uniform(0, 0.25)
@@ -243,13 +281,14 @@ class Mesh:
         if pkt["type"] in FORWARDABLE and self._seen_or_add(src, pkt["msgid"]):
             return
 
+        # any packet proves the sender is a 1-hop neighbour
         now = time.time()
         fresh = src not in self.neighbors or not self.neighbors[src].get("active", False)
         self.neighbors.setdefault(src, {})
         self.neighbors[src].update(rssi=rssi, snr=snr, last=now, active=True)
         self._route_update(src, src, 1, rssi)
         if fresh:
-            self._seen_forget(src)
+            self._seen_forget(src)      # it may have rebooted and reset its msgIds
             self.on_event("node", {"id": src, "state": "up", "rssi": rssi})
 
         t = pkt["type"]
@@ -280,7 +319,7 @@ class Mesh:
                     "age": _int(f[4]) if len(f) > 4 else 0,
                     "rssi": rssi,
                 })
-            self._forward_if_needed(pkt)
+            self._forward_if_needed(pkt)   # GPS is broadcast; still relay hop-wise? no
 
         elif t == "SOS":
             f = pl.split(",", 2)
@@ -289,6 +328,7 @@ class Mesh:
                 "lon": _float(f[1]) if len(f) > 1 else 0,
                 "msg": f[2] if len(f) > 2 else "", "rssi": rssi,
             })
+            # acknowledge and relay
             self._enqueue(build("SOSACK", MY_ID, src, self.next_msgid(), MAX_HOPS,
                                 f"{src},{pkt['msgid']}"), pri=PRI_SOS)
             self._forward_if_needed(pkt)
@@ -312,6 +352,12 @@ class Mesh:
                 self.on_event("status", {"id": src, "team": f[0], "state": f[1]})
 
         elif t == "ROVER":
+            # payload: mode,obstacle_cm,battery_pct[,dist_m,heading_err_deg]
+            # dist_m and heading_err_deg are added in Phase 9 for AUTO_GPS.
+            # dist_m = -1 means "no target set", heading_err_deg is -999 when
+            # there's no current GPS fix. Position is NOT here - the rover
+            # also sends a normal GPS: broadcast (handled above) and the
+            # dashboard joins the two by node id.
             f = pl.split(",")
             if len(f) >= 3:
                 self.on_event("rover", {
@@ -322,6 +368,9 @@ class Mesh:
                     "heading_err": _int(f[4], -999) if len(f) > 4 else -999,
                     "rssi": rssi,
                 })
+            # ROVER is in CONSUMED_NO_FWD - A/B/C already relay it hop by hop
+            # (see their Phase 8 header note); the Pi is the end of the line
+            # for it, same as GPS/STAT, so no _forward_if_needed() call here.
 
         elif t == "DATA":
             if pkt["dest"] == MY_ID:
@@ -330,13 +379,7 @@ class Mesh:
                 self._forward_if_needed(pkt)
 
         elif t == "CMD":
-            if pkt["dest"] != MY_ID:
-                self._forward_if_needed(pkt)
-
-        # ---- Phase 10: MSGACK handling --------------------------------
-        elif t == "MSGACK":
-            # Payload format: <original_msg_id>
-            self.on_event("msgack", {"src": src, "msg_id": pl.strip(), "rssi": rssi})
+            # commands are Pi -> node; if we somehow receive one, just relay
             if pkt["dest"] != MY_ID:
                 self._forward_if_needed(pkt)
 
@@ -345,8 +388,12 @@ class Mesh:
             return
         if pkt["type"] in CONSUMED_NO_FWD:
             return
+        # broadcast SOS/RPT: relay to everyone; directed: only if we have a route
         if pkt["dest"] != "*" and self.best_hop(pkt["dest"]) is None:
             return
+        # SOS/RPT keep their high priority when forwarded; everything else
+        # is forwarded at PRI_FWD so a CMD just enqueued ahead of them
+        # still goes first.
         pri = PRI_SOS if pkt["type"] == "SOS" else PRI_RPT if pkt["type"] == "RPT" else PRI_FWD
         self._enqueue(build(pkt["type"], pkt["src"], pkt["dest"],
                             pkt["msgid"], pkt["ttl"] - 1, pkt["payload"]), pri=pri)
@@ -362,7 +409,7 @@ class Mesh:
                 if pkt:
                     try:
                         self._handle(pkt, rssi, snr)
-                    except Exception as e:
+                    except Exception as e:      # never let one bad packet kill the loop
                         self.on_event("error", {"where": "handle", "err": str(e)})
 
             now = time.time()

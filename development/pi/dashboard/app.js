@@ -1,22 +1,21 @@
-/* SAR Command Centre dashboard - redesigned layout.
-   Layout (matches the attached design image):
-
+/* SAR Command Centre dashboard - with Messages panel.
+   Layout:
       +----------------------------------------------------+
       |  TOP STATUS BAR                                    |
       +----------------------------+-----------------------+
       |  NODES MAP                 |  LIVE TELEMETRY       |
       |  (Leaflet, dark)           |  (per-node cards)     |
       +----------------------------+-----------------------+
-      |  RECENT ACTIVITY           |  TEAM STATUS          |
-      |  (chronological feed)      |  (per-team cards)     |
+      |  RECENT ACTIVITY           |  MESSAGES             |
+      |  (chronological feed)      |  (conversation + compose) |
       +----------------------------+-----------------------+
 
    Plus a floating rover panel that appears once a rover has reported in.
 
-   The data sources are the unchanged JSON API + SSE stream the Pi already
-   exposes (/api/state and /api/events). The state shape is documented at
-   the top of refresh() below.                                       */
+   The data sources are the JSON API + SSE stream the Pi exposes
+   (/api/state, /api/messages, /api/events).                          */
 
+const LORA_MAX_TEXT = 100;
 const DHAKA = [23.7979, 90.4497];
 const map = L.map('map', { zoomControl: true, attributionControl: true })
               .setView(DHAKA, 13);
@@ -28,7 +27,6 @@ L.tileLayer('/tiles/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 // Tap on the map to drop a GOTO pin (operator still has to press Go).
-// A previous pin is cleared so only one pin is visible at a time.
 let gotoPin = null;
 map.on('click', e => {
   const { lat, lng } = e.latlng;
@@ -108,19 +106,106 @@ function setLink(ok) {
 }
 
 // ===================================================================
+// MESSAGES PANEL
+// ===================================================================
+const msgInput  = document.getElementById('msg-text');
+const msgDest   = document.getElementById('msg-dest');
+const msgSend   = document.getElementById('msg-send');
+const msgCount  = document.getElementById('msg-charcount');
+const msgChunk  = document.getElementById('msg-chunkinfo');
+const msgConv   = document.getElementById('msg-conversation');
+
+// character counter
+msgInput.addEventListener('input', () => {
+  const len = msgInput.value.length;
+  msgCount.textContent = String(len);
+  if (len > LORA_MAX_TEXT * 5) {
+    msgCount.className = 'bad';
+  } else if (len > LORA_MAX_TEXT) {
+    msgCount.className = 'warn';
+  } else {
+    msgCount.className = '';
+  }
+  const chunks = len <= LORA_MAX_TEXT ? 1 : Math.ceil(len / LORA_MAX_TEXT);
+  if (chunks > 1) {
+    msgChunk.textContent = `${chunks} packets`;
+    msgChunk.classList.add('visible');
+  } else {
+    msgChunk.classList.remove('visible');
+  }
+});
+
+// send message
+function sendMessage() {
+  const text = msgInput.value.trim();
+  const dest = msgDest.value;
+  if (!text) return;
+  msgSend.disabled = true;
+  msgSend.textContent = '…';
+  fetch('/api/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dest, text })
+  })
+  .then(r => r.json())
+  .then(j => {
+    if (j.ok) {
+      msgInput.value = '';
+      msgInput.dispatchEvent(new Event('input'));
+      // SSE will trigger a refresh to show the new message
+    }
+  })
+  .catch(() => {})
+  .finally(() => {
+    msgSend.disabled = false;
+    msgSend.textContent = 'Send';
+  });
+}
+msgSend.addEventListener('click', sendMessage);
+msgInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// render message bubbles
+function renderMessages(messages) {
+  const badge = document.getElementById('msg-badge');
+  badge.textContent = `${messages.length} message${messages.length === 1 ? '' : 's'}`;
+
+  if (!messages.length) {
+    msgConv.innerHTML = '<div class="msg-empty">No messages yet — send one below</div>';
+    return;
+  }
+
+  // messages come newest-first from the API; reverse for chronological display
+  const sorted = [...messages].reverse();
+  const wasAtBottom = msgConv.scrollTop + msgConv.clientHeight >= msgConv.scrollHeight - 30;
+
+  msgConv.innerHTML = sorted.map(m => {
+    const dir = m.direction === 'out' ? 'out' : 'in';
+    const who = m.direction === 'out'
+      ? `PI → ${m.dest}`
+      : `${m.src} → PI`;
+    const t = new Date(m.ts * 1000).toLocaleTimeString([], { hour12: false });
+    return `
+      <div class="msg-bubble ${dir}">
+        <div class="msg-who">${escHtml(who)}</div>
+        <div class="msg-text">${escHtml(m.text)}</div>
+        <div class="msg-time">${t}</div>
+      </div>`;
+  }).join('');
+
+  // auto-scroll to bottom if the user was already at the bottom
+  if (wasAtBottom) {
+    msgConv.scrollTop = msgConv.scrollHeight;
+  }
+}
+
+
+// ===================================================================
 // MAIN REFRESH
-//
-// /api/state shape:
-//   now       : float
-//   nodes     : [{id, last_seen, rssi, snr, uptime, heap, online}]
-//   positions : { id -> {id,lat,lon,src,sats,ts} }
-//   trails    : { id -> [[lat,lon], ...] }      last 30 minutes
-//   sos       : [{ts,victim,lat,lon,msg,cleared}]   last 20
-//   messages  : [{ts,src,dest,text,direction}]    last 40
-//   reports   : [{ts,id,code,lat,lon,team}]       last 30
-//   status    : [{id,team,state,ts}]
-//   rover     : [{id,mode,obstacle_cm,battery_pct,ts}]
-//   mesh      : {neighbors:{...}, routes:{...}}
 // ===================================================================
 let lastState = null;
 
@@ -157,7 +242,7 @@ async function refresh() {
   Object.entries(st.trails || {}).forEach(([id, pts]) => setTrail(id, pts));
   document.getElementById('map-badge').textContent = `${Object.keys(markers).length} markers`;
 
-  // re-centre on first position fix so the operator actually sees something
+  // re-centre on first position fix
   if (firstFix && posList.length) {
     firstFix = false;
     const p = posList[0];
@@ -203,7 +288,7 @@ async function refresh() {
       const loc = pos ? `${pos.lat.toFixed(4)}, ${pos.lon.toFixed(4)}` : '<span class="dim">no fix</span>';
       const age = fmtAge(now - n.last_seen);
       const rssi = n.rssi;
-      const batt = (st.rover || []).find(r => r.id === n.id);     // rover carries battery
+      const batt = (st.rover || []).find(r => r.id === n.id);
       const battPct = batt ? batt.battery_pct : null;
       const battHtml = battPct != null && battPct >= 0
         ? `<div class="batt"><div class="batt-bar"><i class="${battPct < 25 ? 'warn' : ''} ${battPct < 15 ? 'bad' : ''}"
@@ -238,7 +323,7 @@ async function refresh() {
     }).join('');
   }
 
-  // ---- recent activity panel (chronological merge of reports + messages + SOS) ----
+  // ---- recent activity panel ----
   const feed = document.getElementById('feed');
   const events = [];
   (st.sos || []).forEach(s => events.push({
@@ -254,7 +339,7 @@ async function refresh() {
   }));
   (st.messages || []).forEach(m => events.push({
     ts: m.ts, kind: 'msg',
-    who: m.direction === 'out' ? `${m.src} -> ${m.dest}` : `${m.src} -> PI`,
+    who: m.direction === 'out' ? `${m.src} → ${m.dest}` : `${m.src} → PI`,
     what: m.text,
   }));
   events.sort((a, b) => b.ts - a.ts);
@@ -280,34 +365,8 @@ async function refresh() {
     }).join('');
   }
 
-  // ---- team status panel ----
-  const teamList = document.getElementById('team-list');
-  const teamArr = (st.status || []).slice().sort((a, b) => a.id.localeCompare(b.id));
-  document.getElementById('team-badge').textContent =
-    `${teamArr.length} member${teamArr.length === 1 ? '' : 's'}`;
-  if (teamArr.length === 0) {
-    teamList.innerHTML = '<div class="feed-row empty">no team members yet</div>';
-  } else {
-    teamList.innerHTML = teamArr.map(t => {
-      const initials = (t.id || '??').slice(0, 2).toUpperCase();
-      const state = (t.state || 'UNKNOWN').toUpperCase();
-      const stateCls = ['AVAILABLE','SEARCHING','NEED_ASSIST','EMERGENCY','VICTIM_FOUND']
-                       .includes(state) ? state : 'UNKNOWN';
-      const age = fmtAge(now - t.ts);
-      return `
-        <div class="team-card">
-          <div class="avatar">${escHtml(initials)}</div>
-          <div class="body">
-            <div class="name">${escHtml(t.id)}</div>
-            <div class="role">Team ${escHtml(t.team || '?')}</div>
-          </div>
-          <div class="right">
-            <span class="status-chip ${stateCls}">${escHtml(state)}</span>
-            <span class="age">${age} ago</span>
-          </div>
-        </div>`;
-    }).join('');
-  }
+  // ---- messages panel ----
+  renderMessages(st.messages || []);
 
   // ---- rover floating panel ----
   renderRover(st.rover || [], now);
@@ -355,10 +414,6 @@ function renderRover(roverList, now) {
   const warn = r.obstacle_cm >= 0 && r.obstacle_cm < 25;
   const range = r.obstacle_cm >= 0 ? `${r.obstacle_cm} cm` : 'clear';
   const batt = r.battery_pct >= 0 ? `${r.battery_pct}%` : 'n/a';
-  // GOTO target progress. dist_m == -1 means "no target" (rover not in
-  // AUTO_GPS, or just arrived, or GOCLR). heading_err == -999 means "no
-  // GPS fix yet so we can't compute it". Both are sentinels the rover
-  // sends so the dashboard can tell "we don't know" from "perfect aim".
   let gotoPill = '';
   if (r.dist_m != null && r.dist_m >= 0) {
     const he = r.heading_err;
@@ -376,15 +431,11 @@ function renderRover(roverList, now) {
     `<span class="pill">seen ${fmtAge(now - r.ts)} ago</span>` +
     gotoPill;
 
-  // update mode-button highlight if it changed
   if (r.mode !== lastRoverMode) {
     lastRoverMode = r.mode;
     document.querySelectorAll('#rover-fab .mode button').forEach(b => {
       b.classList.toggle('active', b.dataset.mode === r.mode);
     });
-    // If the rover just dropped AUTO_GPS (arrived, GOCLR'd, or fell back
-    // to RELAY), reset the GO inputs so the operator doesn't think the
-    // stale numbers are still live.
     if (r.mode !== 'AUTO_GPS') {
       const st = document.getElementById('goto-status');
       if (st) st.textContent = 'no active target';
@@ -406,12 +457,7 @@ document.querySelectorAll('#rover-fab .mode button').forEach(btn => {
 });
 
 // ===================================================================
-// GOTO  -  send the rover to a target GPS coordinate.
-//   * type lat/lon into the inputs and press Go
-//   * or click on the map - it copies the clicked coords into the
-//     inputs and previews them so the operator can hit Go
-//   * "Cancel current target" sends GOCLR which makes the rover drop
-//     the route and sit as a RELAY node at wherever it happens to be
+// GOTO
 // ===================================================================
 function sendRoverGoto(rawLat, rawLon) {
   const st = document.getElementById('goto-status');
@@ -452,7 +498,6 @@ document.getElementById('goto-clr').addEventListener('click', () => {
     if (st) st.textContent = `network error: ${err}`;
   });
 });
-// Enter key on either input -> Go
 ['goto-lat', 'goto-lon'].forEach(id => {
   document.getElementById(id).addEventListener('keydown', e => {
     if (e.key === 'Enter') {
@@ -462,9 +507,6 @@ document.getElementById('goto-clr').addEventListener('click', () => {
     }
   });
 });
-// Map click -> drop a pin and prefill the inputs. The map is set up further
-// down in the file; this event hook attaches to it on first user click by
-// registering a one-shot listener bound to the same Leaflet map variable.
 window.__roverGotoPrefill = (lat, lng) => {
   document.getElementById('goto-lat').value = lat.toFixed(6);
   document.getElementById('goto-lon').value = lng.toFixed(6);
@@ -485,10 +527,16 @@ function connectSSE() {
   es.onmessage = ev => {
     let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
     if (m.kind === 'sos') { refresh(); return; }
-    if (['pos', 'node', 'report', 'status', 'message', 'hb',
+    // Immediate refresh for messages so the conversation feels real-time
+    if (m.kind === 'message') {
+      clearTimeout(connectSSE._tm);
+      connectSSE._tm = setTimeout(refresh, 150);
+      return;
+    }
+    if (['pos', 'node', 'report', 'status', 'hb',
          'command', 'rover', 'route'].includes(m.kind)) {
       clearTimeout(connectSSE._t);
-      connectSSE._t = setTimeout(refresh, 300);    // debounce bursts
+      connectSSE._t = setTimeout(refresh, 300);
     }
   };
 }

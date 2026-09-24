@@ -9,61 +9,172 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.sar.rescue.api.RetrofitClient
 import com.sar.rescue.api.StateResponse
+import com.sar.rescue.api.StatusResponse
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @Composable
 fun DashboardScreen() {
-    val coroutineScope = rememberCoroutineScope()
     var state by remember { mutableStateOf<StateResponse?>(null) }
+    var status by remember { mutableStateOf<StatusResponse?>(null) }
+    var isFallback by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var connectionTarget by remember { mutableStateOf("") }
     
     LaunchedEffect(Unit) {
         while (true) {
+            // Try Pi's /api/state first (full data)
             try {
                 state = RetrofitClient.api.getState()
+                status = null
+                isFallback = false
                 error = null
+                connectionTarget = "Command Centre"
             } catch (e: Exception) {
-                error = "Connection lost"
+                // Fall back to node's /api/status (limited data)
+                try {
+                    status = RetrofitClient.api.getStatus()
+                    state = null
+                    isFallback = true
+                    error = null
+                    connectionTarget = "Field Node"
+                } catch (e2: Exception) {
+                    error = "Cannot connect. Check:\n" +
+                            "• WiFi connected to a node or Pi?\n" +
+                            "• Go to Settings to set the right IP"
+                }
             }
             delay(3000)
         }
     }
     
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        if (error != null) {
-            Text("Status: $error", color = MaterialTheme.colorScheme.error)
-        } else {
-            Text("Status: Connected to Mesh", color = MaterialTheme.colorScheme.primary)
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Button(onClick = {
-            coroutineScope.launch {
-                try { RetrofitClient.api.sendSos() } catch (e: Exception) {}
+        // Connection status card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = when {
+                    error != null -> MaterialTheme.colorScheme.errorContainer
+                    isFallback -> MaterialTheme.colorScheme.tertiaryContainer
+                    else -> MaterialTheme.colorScheme.primaryContainer
+                }
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    when {
+                        error != null -> "⚠ Disconnected"
+                        isFallback -> "📡 Connected to $connectionTarget"
+                        else -> "✅ Connected to $connectionTarget"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    color = when {
+                        error != null -> MaterialTheme.colorScheme.onErrorContainer
+                        isFallback -> MaterialTheme.colorScheme.onTertiaryContainer
+                        else -> MaterialTheme.colorScheme.onPrimaryContainer
+                    }
+                )
+                if (error != null) {
+                    Text(error!!, 
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.onErrorContainer)
+                }
+                if (isFallback) {
+                    Text("Limited data — node can show peers only.\nConnect to Pi for full dashboard.",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.onTertiaryContainer)
+                }
             }
-        }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
-            Text("SEND SOS BROADCAST")
         }
         
         Spacer(modifier = Modifier.height(16.dp))
-        Text("Nodes Status", style = MaterialTheme.typography.titleLarge)
         
-        state?.let { s ->
-            LazyColumn {
-                items(s.nodes) { node ->
-                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text("Node: ${node.id}")
-                            Text("Online: ${node.online}")
-                            Text("RSSI: ${node.rssi ?: "N/A"}")
+        // SOS button
+        Button(
+            onClick = {
+                kotlinx.coroutines.MainScope().launch {
+                    try { RetrofitClient.api.sendSos() } catch (e: Exception) {}
+                }
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+            modifier = Modifier.fillMaxWidth().height(56.dp)
+        ) {
+            Text("🆘 SEND SOS BROADCAST", style = MaterialTheme.typography.titleMedium)
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Nodes", style = MaterialTheme.typography.titleLarge)
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        if (state != null) {
+            if (state!!.nodes.isEmpty()) {
+                Text("No nodes reporting yet",
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                LazyColumn {
+                    items(state!!.nodes) { node ->
+                        Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Row(modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween) {
+                                Column {
+                                    Text("Node ${node.id}", 
+                                         style = MaterialTheme.typography.titleSmall)
+                                    Text("RSSI: ${node.rssi ?: "N/A"}", 
+                                         style = MaterialTheme.typography.bodySmall)
+                                }
+                                Surface(
+                                    shape = MaterialTheme.shapes.small,
+                                    color = if (node.online) MaterialTheme.colorScheme.primaryContainer
+                                            else MaterialTheme.colorScheme.errorContainer,
+                                    modifier = Modifier.padding(4.dp)
+                                ) {
+                                    Text(
+                                        if (node.online) " ONLINE " else " LOST ",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
-        } ?: run {
-            Text("Loading...")
+        } else if (status != null) {
+            if (status!!.peers.isEmpty()) {
+                Text("No peers in range",
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                LazyColumn {
+                    items(status!!.peers) { peer ->
+                        Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Row(modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween) {
+                                Column {
+                                    Text("Node ${peer.id}", 
+                                         style = MaterialTheme.typography.titleSmall)
+                                    Text("RSSI: ${peer.rssi ?: "N/A"}", 
+                                         style = MaterialTheme.typography.bodySmall)
+                                }
+                                Surface(
+                                    shape = MaterialTheme.shapes.small,
+                                    color = if (peer.up == 1) MaterialTheme.colorScheme.primaryContainer
+                                            else MaterialTheme.colorScheme.errorContainer,
+                                    modifier = Modifier.padding(4.dp)
+                                ) {
+                                    Text(
+                                        if (peer.up == 1) " ONLINE " else " LOST ",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (error == null) {
+            CircularProgressIndicator(modifier = Modifier.padding(16.dp))
         }
     }
 }
+
+private fun kotlinx.coroutines.MainScope() = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main)

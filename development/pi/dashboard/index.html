@@ -79,14 +79,37 @@
     </div>
   </section>
 
-  <!-- Bottom-right: team status -->
-  <section class="panel" id="team-panel">
+  <!-- Bottom-right: MESSAGES (replaces old Team Status) -->
+  <section class="panel" id="msg-panel">
     <div class="panel-head">
-      <h2>Team Status</h2>
-      <span class="badge" id="team-badge">0 members</span>
+      <h2>Messages</h2>
+      <span class="badge" id="msg-badge">0 messages</span>
     </div>
-    <div class="panel-body">
-      <div class="team-list" id="team-list"></div>
+    <div class="panel-body msg-panel-body">
+      <!-- Conversation area -->
+      <div class="msg-conversation" id="msg-conversation">
+        <div class="msg-empty">No messages yet</div>
+      </div>
+      <!-- Compose area -->
+      <div class="msg-compose">
+        <div class="msg-compose-row">
+          <select id="msg-dest" class="msg-dest-select">
+            <option value="A">→ A</option>
+            <option value="B">→ B</option>
+            <option value="C">→ C</option>
+            <option value="R">→ R</option>
+            <option value="*" selected>→ * (all)</option>
+          </select>
+          <div class="msg-char-info">
+            <span id="msg-charcount">0</span><span class="msg-charlimit">/100</span>
+            <span id="msg-chunkinfo" class="msg-chunkinfo"></span>
+          </div>
+        </div>
+        <div class="msg-compose-row">
+          <input type="text" id="msg-text" class="msg-input" placeholder="Type a message…" maxlength="500" autocomplete="off">
+          <button id="msg-send" class="msg-send-btn">Send</button>
+        </div>
+      </div>
     </div>
   </section>
 

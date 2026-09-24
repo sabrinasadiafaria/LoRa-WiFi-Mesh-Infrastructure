@@ -17,7 +17,11 @@ fun MapScreen() {
 
 @Composable
 fun SettingsScreen() {
-    var ipAddress by remember { mutableStateOf("10.42.0.1") }
+    // Default to the ESP32 node AP IP (192.168.4.1, port 80).
+    // Users can switch to the Pi's IP (e.g. 10.42.0.1 for Pi hotspot,
+    // or 192.168.1.x for LAN) and the port auto-adjusts to 8000.
+    var ipAddress by remember { mutableStateOf("192.168.4.1") }
+    var connectionInfo by remember { mutableStateOf("Node WiFi (port 80)") }
     
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("Settings", style = MaterialTheme.typography.titleLarge)
@@ -28,11 +32,47 @@ fun SettingsScreen() {
             onValueChange = { 
                 ipAddress = it 
                 com.sar.rescue.api.RetrofitClient.updateBaseUrl(it)
+                connectionInfo = when {
+                    it.startsWith("10.42.") -> "Pi hotspot (port 8000)"
+                    it.startsWith("192.168.1.") -> "Pi on LAN (port 8000)"
+                    it.startsWith("192.168.4.") -> "Node WiFi (port 80)"
+                    it.contains(":") -> "Custom (port in URL)"
+                    else -> "Node WiFi (port 80)"
+                }
             },
-            label = { Text("Command Centre IP Address") },
+            label = { Text("Server IP Address") },
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(modifier = Modifier.height(8.dp))
-        Text("Default is 10.42.0.1 (Pi WiFi Access Point)", style = MaterialTheme.typography.bodySmall)
+        Text(connectionInfo, style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.primary)
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Text("Quick Connect", style = MaterialTheme.typography.titleMedium)
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        OutlinedButton(
+            onClick = {
+                ipAddress = "192.168.4.1"
+                com.sar.rescue.api.RetrofitClient.updateBaseUrl("192.168.4.1")
+                connectionInfo = "Node WiFi (port 80)"
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Connect to Node (192.168.4.1)")
+        }
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        OutlinedButton(
+            onClick = {
+                ipAddress = "10.42.0.1"
+                com.sar.rescue.api.RetrofitClient.updateBaseUrl("10.42.0.1")
+                connectionInfo = "Pi hotspot (port 8000)"
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Connect to Pi Hotspot (10.42.0.1)")
+        }
     }
 }

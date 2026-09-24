@@ -1,9 +1,6 @@
 """
 Minimal SX1278 / RA-02 LoRa driver for a Raspberry Pi over SPI.
 
-Phase 9 (FINAL) integration build. Canonical copy lives under
-development/pi/.
-
 Deliberately small and register-explicit so the PHY matches the ESP32 nodes
 EXACTLY. The nodes run the Sandeep Mistry LoRa library; this mirrors its
 begin() sequence register for register:

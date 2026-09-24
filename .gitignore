@@ -1,24 +1,26 @@
-# Android/Gradle overrides
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
-local.properties
+# Android / Gradle
+build/
+.gradle/
 .idea/
+*.apk
+*.aar
+*.dex
+local.properties
+*.iml
+.cxx/
+captures/
 
-# Android/Gradle generic
-**/build/
-**/.gradle/
-**/.idea/
-**/*.iml
-**/local.properties
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.db
+*.sqlite
+
+# OS / Editors
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
