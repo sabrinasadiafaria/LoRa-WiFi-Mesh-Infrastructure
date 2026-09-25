@@ -211,7 +211,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 // ------------------------------- LoRa PHY ---------------------------------
 // MUST MATCH A/B/C AND THE PI EXACTLY - see the PHY box printed at boot.
 #define LORA_FREQ      433E6
-#define LORA_SF        7        // same as A/B/C - see their Phase 7 notes on
+#define LORA_SF        9        // same as A/B/C - see their Phase 7 notes on
                                 // why this is not SF9/SF8. Change it here
                                 // ONLY together with all three other sketches
                                 // and pi/sx1278.py.

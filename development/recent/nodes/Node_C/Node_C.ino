@@ -1672,6 +1672,7 @@ void handleStatus() {
            "\"tx\":%lu,\"rx\":%lu,\"bad\":%lu,\"wedge\":%lu,"
            "\"mystatus\":\"%s\",\"team\":\"%s\","
            "\"sos\":%d,\"sosvictim\":\"%s\",\"sostext\":\"%s\","
+           "\"msgText\":\"%s\",\"msgFrom\":\"%s\","
            "\"peers\":%s,\"routes\":%s}",
            MY_ID, (unsigned)FW_VERSION, (int)LORA_SF, radioOk ? 1 : 0,
            lat, lon, (unsigned)src, (unsigned long)(ageMs / 1000UL),
@@ -1686,8 +1687,7 @@ void handleStatus() {
            (unsigned long)statTx, (unsigned long)statRx,
            (unsigned long)statBad, (unsigned long)statWedge,
            myStatus, myTeam,
-           sosAlert ? 1 : 0, sosVictim, sosText,
-           peers, routesJson);
+           sosAlert ? 1 : 0, sosVictim, sosText, lastMsgText, lastMsgFrom, peers, routesJson);
   server.send(200, "application/json", json);
 }
 
@@ -2975,3 +2975,4 @@ void loop() {
   uint32_t dt = millis() - loopStartMs;
   if (dt > maxLoopMs) maxLoopMs = dt;
 }
+

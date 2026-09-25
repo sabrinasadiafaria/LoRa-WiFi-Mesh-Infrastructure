@@ -398,9 +398,11 @@ class Mesh:
     def _run(self):
         self._hb_at = time.time() + random.uniform(0, 2)
         self._rt_at = time.time() + random.uniform(1, 4)
+        self._last_rx = time.time()
         while not self._stop.is_set():
             got = self.radio.poll()
             if got:
+                self._last_rx = time.time()
                 data, rssi, snr = got
                 pkt = parse(data)
                 if pkt:
@@ -410,6 +412,12 @@ class Mesh:
                         self.on_event("error", {"where": "handle", "err": str(e)})
 
             now = time.time()
+            if now - self._last_rx > 120.0:
+                self.on_event("error", {"where": "radio", "err": "watchdog reset - no packets in 2 min"})
+                self.radio.begin()
+                self.radio.receive()
+                self._last_rx = now
+
             if now >= self._hb_at:
                 self._send_hb(); self._hb_at = now + HB_INTERVAL + random.uniform(0, 3)
             if now >= self._rt_at:

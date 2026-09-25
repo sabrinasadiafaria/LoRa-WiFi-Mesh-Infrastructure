@@ -114,7 +114,7 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 // NOTE: the stock LoRa library leaves CRC OFF and uses the public sync word
 // 0x12, so any other SX127x nearby collides with us. Both are fixed here.
 #define LORA_FREQ      433E6
-#define LORA_SF        7        // BACK TO THE KNOWN-GOOD VALUE.
+#define LORA_SF        9        // BACK TO THE KNOWN-GOOD VALUE.
                                 // SF7 is what phases 3-6 ran, and those linked up
                                 // reliably. Phase 7 raised it to 9 for range and
                                 // then 8; both times the mesh got WORSE, so the
@@ -775,8 +775,16 @@ extern char myStatus[14];
 void sendReport(const char *code);
 void sendStatus(const char *st);
 
+uint32_t buzzerOffTime = 0;
+void buzzerTick() {
+  if (buzzerOffTime && millis() > buzzerOffTime) {
+    noTone(PIN_BUZZER);
+    buzzerOffTime = 0;
+  }
+}
 static inline void buzzerBeep(uint16_t freq, uint16_t ms) {
-  tone(PIN_BUZZER, freq, ms);
+  tone(PIN_BUZZER, freq);
+  buzzerOffTime = millis() + ms;
 }
 
 void statusButtonService() {
@@ -1465,6 +1473,19 @@ const char PORTAL_HTML[] PROGMEM =
   " </div>\n"
   "</div>\n"
   "\n"
+  "<div class=\"card\">\n"
+  " <div class=\"k\">Custom Message</div>\n"
+  " <div class=\"grid2\">\n"
+  "  <input id=\"cmsg\" placeholder=\"Type message...\" maxlength=\"30\" style=\"grid-column:1/-1\">\n"
+  "  <button class=\"sec\" onclick=\"sendMsg()\" style=\"grid-column:1/-1\">Broadcast to Mesh</button>\n"
+  " </div>\n"
+  "</div>\n"
+  "\n"
+  "<div class=\"card\" id=\"msgBox\" style=\"display:none; border:2px solid var(--ok)\">\n"
+  " <div class=\"k\">Latest Message <span class=\"tag\" id=\"msgFrom\"></span></div>\n"
+  " <div style=\"font-size:16px; margin-top:8px\" id=\"msgText\"></div>\n"
+  "</div>\n"
+  "\n"
   "<details>\n"
   " <summary>Diagnostics</summary>\n"
   " <div class=\"card\">\n"
@@ -1494,6 +1515,7 @@ const char PORTAL_HTML[] PROGMEM =
   "function sos(){ if(confirm('Broadcast an SOS to the whole mesh?')) post('/api/sos') }\n"
   "function rpt(c){ post('/api/report?code='+c) }\n"
   "function st(s){ post('/api/teamstatus?state='+s) }\n"
+  "function sendMsg(){ var m=$('cmsg').value.trim(); if(m){ post('/api/msg?text='+encodeURIComponent(m)); $('cmsg').value=''; } }\n"
   "function rescan(){\n"
   " var b=$('rescanbtn'); b.disabled=true; b.textContent='Reconnecting...';\n"
   " fetch('/api/rescan').then(function(r){return r.text()}).then(function(t){\n"
@@ -1674,6 +1696,7 @@ void handleStatus() {
            "\"tx\":%lu,\"rx\":%lu,\"bad\":%lu,\"wedge\":%lu,"
            "\"mystatus\":\"%s\",\"team\":\"%s\","
            "\"sos\":%d,\"sosvictim\":\"%s\",\"sostext\":\"%s\","
+           "\"msgText\":\"%s\",\"msgFrom\":\"%s\","
            "\"peers\":%s,\"routes\":%s}",
            MY_ID, (unsigned)FW_VERSION, (int)LORA_SF, radioOk ? 1 : 0,
            lat, lon, (unsigned)src, (unsigned long)(ageMs / 1000UL),
@@ -1688,8 +1711,7 @@ void handleStatus() {
            (unsigned long)statTx, (unsigned long)statRx,
            (unsigned long)statBad, (unsigned long)statWedge,
            myStatus, myTeam,
-           sosAlert ? 1 : 0, sosVictim, sosText,
-           peers, routesJson);
+           sosAlert ? 1 : 0, sosVictim, sosText, lastMsgText, lastMsgFrom, peers, routesJson);
   server.send(200, "application/json", json);
 }
 
@@ -1716,6 +1738,13 @@ void handleTeamStatus() {
   if (!statusValid(st)) { server.send(400, "text/plain", "unknown status"); return; }
   sendStatus(st);
   server.send(200, "text/plain", "Status updated.");
+}
+
+void handleMsg() {
+  if (!server.hasArg("text")) { server.send(400, "text/plain", "missing text"); return; }
+  String t = server.arg("text");
+  sendData("*", t.c_str());
+  server.send(200, "text/plain", "Message sent to mesh");
 }
 
 void handleRescan() {
@@ -1746,6 +1775,7 @@ void portalBegin() {
   server.on("/api/report", handleReport);
   server.on("/api/teamstatus", handleTeamStatus);
   server.on("/api/rescan", handleRescan);
+  server.on("/api/msg", handleMsg);
 
   // Connectivity-check URLs the phones probe. Returning our page (rather than
   // the 204 / "Success" they expect) is what triggers the portal popup.
@@ -2210,29 +2240,30 @@ void handleOneRx() {
     }
 
   } else if (strcmp(p.type, "DATA") == 0) {
-    if (strcmp(p.dest, MY_ID) == 0) {
-      // Arrived. MAX_HOPS was the starting TTL, so this is how far it came.
+    bool isMe = (strcmp(p.dest, MY_ID) == 0);
+    bool isBcast = (strcmp(p.dest, "*") == 0);
+    if (isMe || isBcast) {
       unsigned hops = (unsigned)(MAX_HOPS - p.ttl);
       statDataRx++;
       snprintf(lastMsgFrom, sizeof(lastMsgFrom), "%s", p.src);
       snprintf(lastMsgText, sizeof(lastMsgText), "%s", p.payload);
       lastMsgTime = millis();
-      Serial.printf("\n>>> MESSAGE from %s after %u hop(s): %s\n\n",
+      if (isBcast) buzzerBeep(1200, 200); // notify for broadcast
+      Serial.printf("\\n>>> MESSAGE from %s after %u hop(s): %s\\n\\n",
                     p.src, hops, p.payload);
+    }
 
-    } else if (p.ttl > 0) {
-      const char *hop = routeBestHop(p.dest);
+    if (p.ttl > 0 && !isMe) {
+      const char *hop = isBcast ? "*" : routeBestHop(p.dest);
       if (!hop) {
-        // Not a silent black hole - say so, because this is what a broken
-        // mesh looks like and it should be visible during a demo.
-        Serial.printf("[fwd] DROP %s->%s : no route from here\n", p.src, p.dest);
+        Serial.printf("[fwd] DROP %s->%s : no route from here\\n", p.src, p.dest);
       } else {
         char frame[MAX_PACKET_LEN];
         if (pktBuild(frame, sizeof(frame), "DATA", p.src, p.dest,
                      p.msgId, (uint8_t)(p.ttl - 1), p.payload)) {
           radioEnqueue(frame);
           statFwd++;
-          Serial.printf("[fwd] %s->%s via %s (ttl %u)\n",
+          Serial.printf("[fwd] %s->%s via %s (ttl %u)\\n",
                         p.src, p.dest, hop, (unsigned)(p.ttl - 1));
         }
       }
@@ -2911,6 +2942,7 @@ void loop() {
 
   // 1b. SOS button (edge detected) and the SOS burst/auto-clear state machine
   buttonService();
+  buzzerTick();
   statusButtonService();
   sosService();
 
@@ -2972,3 +3004,4 @@ void loop() {
   uint32_t dt = millis() - loopStartMs;
   if (dt > maxLoopMs) maxLoopMs = dt;
 }
+
