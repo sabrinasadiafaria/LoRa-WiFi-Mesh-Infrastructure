@@ -1,0 +1,92 @@
+﻿diff --git a/development/phase 9/Node Rover.md b/development/recent/rover/Node_Rover.ino
+index 1413cb4..8613c54 100644
+--- a/development/phase 9/Node Rover.md	
++++ b/development/recent/rover/Node_Rover.ino
+@@ -103,6 +103,7 @@
+ #include <esp_task_wdt.h>
+ #include <esp_system.h>
+ #include <math.h>
++#include <DHT.h>
+ 
+ // Newer esp32 / esp32-s3 cores guard M_PI behind _USE_MATH_DEFINES. Define
+ // it explicitly here so the AUTO_GPS bearing code compiles on either.
+@@ -198,6 +199,9 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+ #define SERVO_PWM_BITS     16
+ 
+ // ---- battery sense (optional) ---------------------------------------------
++#define PIN_DHT11           47    // DHT11 DATA
++#define PIN_MQ2             3     // MQ-2 AO through a voltage divider
++#define DHT_TYPE            DHT11
+ #define PIN_BATTERY_ADC     2             // ADC1_CH1 (ADC1 = GPIO 1..10)
+ #define BATTERY_ADC_VMIN   6.4f           // volts AT THE ADC PIN at "empty" -
+ #define BATTERY_ADC_VMAX   8.4f           // and "full" - CALIBRATE FOR YOUR
+@@ -1810,6 +1814,28 @@ void roverService() {
+ }
+ 
+ 
++// ------------------------- environment sensors ---------------------------
++DHT dht(PIN_DHT11, DHT_TYPE);
++float roverTempC = NAN;
++float roverHumidity = NAN;
++int roverMq2 = -1;
++uint32_t sensorLastMs = 0;
++
++void sensorService() {
++  uint32_t now = millis();
++  if (now - sensorLastMs < 2500UL) return;
++  sensorLastMs = now;
++
++  float h = dht.readHumidity();
++  float t = dht.readTemperature();
++  if (!isnan(h)) roverHumidity = h;
++  if (!isnan(t)) roverTempC = t;
++
++  // MQ-2 AO MUST NOT exceed 3.3V at the ESP32-S3 ADC pin.
++  int raw = analogRead(PIN_MQ2);
++  roverMq2 = raw;
++}
++
+ // Raw ADC -> rough percentage. See the header note: CALIBRATE
+ // BATTERY_ADC_VMIN/VMAX/DIVIDER for your actual pack and divider, or treat
+ // this as illustrative only. Returns -1 if the pin reads implausibly (no
+@@ -1838,11 +1864,16 @@ void sendRoverTelemetry() {
+   // is -999 when there is no current GPS fix to compute it from. Old 3-field
+   // receivers (Pi mesh.py pre-Phase 9) gracefully degrade because we only
+   // check `len(f) >= 3` to read the first three fields.
++  sensorService();
+   int distM = (targetSet && lastDistMeters >= 0.0) ? (int)lastDistMeters : -1;
+   int hErr  = (isnan(lastHeadingErrDeg)) ? -999 : (int)lastHeadingErrDeg;
+-  char payload[64];
+-  snprintf(payload, sizeof(payload), "%s,%d,%d,%d,%d",
+-           roverModeName(roverMode), ultrasonicCm, batt, distM, hErr);
++  int temp10 = isnan(roverTempC) ? -999 : (int)lroundf(roverTempC * 10.0f);
++  int hum10  = isnan(roverHumidity) ? -999 : (int)lroundf(roverHumidity * 10.0f);
++  char payload[96];
++  // mode,obstacle,battery,dist,heading,temp_x10,humidity_x10,mq2
++  snprintf(payload, sizeof(payload), "%s,%d,%d,%d,%d,%d,%d,%d",
++           roverModeName(roverMode), ultrasonicCm, batt, distM, hErr,
++           temp10, hum10, roverMq2);
+ 
+   char frame[MAX_PACKET_LEN];
+   if (pktBuild(frame, sizeof(frame), "ROVER", MY_ID, "*", nextMsgId(), MAX_HOPS, payload)
+@@ -2880,6 +2911,8 @@ void setup() {
+   delay(200);
+ 
+   pinMode(PIN_SOS_BUTTON, INPUT_PULLUP);
++  pinMode(PIN_MQ2, INPUT);
++  dht.begin();
+   motorInit();          // FIRST - drives every motor pin low before anything
+   ultrasonicInit();     // else runs, so a reset cannot leave the wheels on
+   servoInit();
+@@ -2988,7 +3021,10 @@ void loop() {
+   buttonService();
+   sosService();
+ 
+-  // 1c. drive the rover: ultrasonic ping/read, AUTO bump-turn or MANUAL
++  // 1c. environment sensors
++  sensorService();
++
++  // 1d. drive the rover: ultrasonic ping/read, AUTO bump-turn or MANUAL
+   //     pulse timeout or RELAY hold - all non-blocking
+   roverService();
+ 

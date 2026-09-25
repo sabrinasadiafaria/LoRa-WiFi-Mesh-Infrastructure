@@ -1,0 +1,155 @@
+﻿diff --git a/development/phase 9/Node C.md b/development/recent/nodes/Node_C/Node_C.ino
+index c071869..ea9047f 100644
+--- a/development/phase 9/Node C.md	
++++ b/development/recent/nodes/Node_C/Node_C.ino
+@@ -51,6 +51,7 @@
+ //    Change it in ALL THREE sketches - nodes on different SFs cannot hear
+ //    each other at all. Airtime and the watchdogs adapt automatically.
+ //
++//  Button 1: SOS GPIO 4 to GND. Button 2: status/report GPIO 13 to GND. Buzzer GPIO 25.
+ //  SOS button: momentary switch GPIO 4 to GND. tap = raise (or dismiss a
+ //  received alert), hold >1.5 s = dismiss.
+ //
+@@ -68,6 +69,7 @@
+ #include <Adafruit_SSD1306.h>
+ #include <WiFi.h>
+ #include <WebServer.h>
++#include "SecureGpsPortal.h"
+ #include <DNSServer.h>
+ #include <esp_task_wdt.h>
+ #include <esp_system.h>
+@@ -94,7 +96,9 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+ #define I2C_SDA        21
+ #define I2C_SCL        22
+ 
+-#define PIN_SOS_BUTTON  4    // external push button to GND (used from Phase 3)
++#define PIN_SOS_BUTTON  4    // Button 1: SOS, active LOW
++#define PIN_STATUS_BUTTON 13   // Button 2: status/report, active LOW
++#define PIN_BUZZER       25    // piezo buzzer
+ #define PIN_ENTROPY    34    // ADC1, input-only, floats -> good random seed
+ 
+ #define GPS_RX_PIN     16    // ESP32 RX2  <- GPS TX
+@@ -756,6 +760,53 @@ bool     btnPrev       = true;       // INPUT_PULLUP idles HIGH
+ uint32_t btnChangeTime = 0;
+ bool     btnHeldHandled = false;
+ 
++// Button 2 + buzzer
++bool     statBtnPrev = true;
++uint32_t statBtnChangeTime = 0;
++bool     statBtnHeldHandled = false;
++
++// Forward declarations used by Button 2 service.
++extern char myStatus[14];
++void sendReport(const char *code);
++void sendStatus(const char *st);
++
++static inline void buzzerBeep(uint16_t freq, uint16_t ms) {
++  tone(PIN_BUZZER, freq, ms);
++}
++
++void statusButtonService() {
++  bool now = (digitalRead(PIN_STATUS_BUTTON) == HIGH);
++  uint32_t t = millis();
++
++  if (now != statBtnPrev) {
++    if (t - statBtnChangeTime < SOS_DEBOUNCE_MS) return;
++    statBtnChangeTime = t;
++    if (!now) {
++      statBtnHeldHandled = false;
++      buzzerBeep(2200, 60);
++    } else {
++      if (!statBtnHeldHandled) {
++        // Short press: cycle team status.
++        if (!strcmp(myStatus, "AVAILABLE")) sendStatus("SEARCHING");
++        else if (!strcmp(myStatus, "SEARCHING")) sendStatus("VICTIM_FOUND");
++        else if (!strcmp(myStatus, "VICTIM_FOUND")) sendStatus("NEED_ASSIST");
++        else sendStatus("AVAILABLE");
++        buzzerBeep(2500, 120);
++      }
++    }
++    statBtnPrev = now;
++    return;
++  }
++
++  if (!now && !statBtnHeldHandled &&
++      (t - statBtnChangeTime > 2000UL)) {
++    statBtnHeldHandled = true;
++    // Long press: send a rescue report using this node's best location.
++    sendReport("VICTIM_FOUND");
++    buzzerBeep(3000, 250);
++  }
++}
++
+ // ---- last rescue report / team status heard from each node -------------
+ struct PeerReport {
+   char     id[4];
+@@ -1452,14 +1503,8 @@ const char PORTAL_HTML[] PROGMEM =
+   "}\n"
+   "function sendLoc(a,b,c){ post('/api/loc?lat='+a+'&lon='+b+'&acc='+(c||0)) }\n"
+   "function share(){\n"
+-  " if(!navigator.geolocation){ toast('No geolocation API in this browser','err'); return }\n"
+-  " toast('Requesting location...');\n"
+-  " navigator.geolocation.getCurrentPosition(\n"
+-  "  function(p){ sendLoc(p.coords.latitude.toFixed(6),p.coords.longitude.toFixed(6),\n"
+-  "                       Math.round(p.coords.accuracy)) },\n"
+-  "  function(e){ toast('Browser refused: '+e.message,'err');\n"
+-  "               $('geohint').style.color='#ffc043' },\n"
+-  "  {enableHighAccuracy:true,timeout:10000,maximumAge:0});\n"
++  " toast('Opening secure GPS page...');\n"
++  " window.location.href='https://192.168.4.1/';\n"
+   "}\n"
+   "function manual(){\n"
+   " var a=parseFloat($('la').value), b=parseFloat($('lo').value);\n"
+@@ -1710,12 +1755,14 @@ void portalBegin() {
+ 
+   server.begin();
+   Serial.printf("[portal] AP \"%s\" up at %s\n", AP_SSID, apIP.toString().c_str());
++  sarGpsStartHttps();
+ }
+ 
+ void portalService() {
+   if (!portalOk) return;
+   dns.processNextRequest();
+   server.handleClient();
++  sarGpsHttpsService();
+ }
+ #endif  // ENABLE_PORTAL
+ 
+@@ -1929,7 +1976,9 @@ void printRoutes() {
+ // Raise the local full-screen alert. Used both when WE trigger an SOS and
+ // when we RECEIVE one.
+ void sosShowAlert(const char *victim, double lat, double lon, const char *text) {
++  bool wasActive = sosAlert;
+   sosAlert = true;
++  if (!wasActive) buzzerBeep(2600, 220);
+   sosAlertStart = millis();
+   strncpy(sosVictim, victim, sizeof(sosVictim) - 1);
+   sosVictim[sizeof(sosVictim) - 1] = '\0';
+@@ -2733,7 +2782,10 @@ void setup() {
+   Serial.begin(SERIAL_BAUD);
+   delay(200);
+ 
+-  pinMode(PIN_SOS_BUTTON, INPUT_PULLUP);      // used from Phase 3
++  pinMode(PIN_SOS_BUTTON, INPUT_PULLUP);
++  pinMode(PIN_STATUS_BUTTON, INPUT_PULLUP);
++  pinMode(PIN_BUZZER, OUTPUT);
++  buzzerBeep(1800, 100);
+ 
+   // Seed from a floating ADC1 pin, not GPIO 0. GPIO 0 is a strapping pin and
+   // reads nearly the same on every board, so the old code gave all the nodes
+@@ -2823,6 +2875,7 @@ void setup() {
+   // STEP 4: Wi-Fi captive portal
+ #if ENABLE_PORTAL
+   portalBegin();
++  Serial.printf("[diag] WiFi AP clients=%u, free heap=%lu\n", (unsigned)WiFi.softAPgetStationNum(), (unsigned long)ESP.getFreeHeap());
+   oledBanner("WiFi AP up", AP_SSID);
+ #endif
+ 
+@@ -2858,6 +2911,7 @@ void loop() {
+ 
+   // 1b. SOS button (edge detected) and the SOS burst/auto-clear state machine
+   buttonService();
++  statusButtonService();
+   sosService();
+ 
+   // 2. serve the captive portal (both calls are non-blocking)
