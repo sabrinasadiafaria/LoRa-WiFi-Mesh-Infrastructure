@@ -370,9 +370,9 @@ class Mesh:
             # for it, same as GPS/STAT, so no _forward_if_needed() call here.
 
         elif t == "DATA":
-            if pkt["dest"] == MY_ID:
+            if pkt["dest"] == MY_ID or pkt["dest"] == "*":
                 self.on_event("message", {"src": src, "text": pl})
-            else:
+            if pkt["dest"] != MY_ID:
                 self._forward_if_needed(pkt)
 
         elif t == "CMD":
