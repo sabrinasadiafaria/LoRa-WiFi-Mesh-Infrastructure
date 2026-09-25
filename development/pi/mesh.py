@@ -238,10 +238,7 @@ class Mesh:
         entries = []
         for dest, r in self.routes.items():
             if r["valid"]:
-                if r["hops"] == 1:
-                    entries.append(f"{dest},{r['via']}")
-                else:
-                    entries.append(f"{dest},{r['hops']},{r['via']}")
+                entries.append(f"{dest},{r['hops']},{r['via']}")
         payload = ";".join(entries)
         self._enqueue(build("RT", MY_ID, "*", self.next_msgid(), 0, payload),
                       pri=PRI_PERIODIC)
@@ -340,9 +337,9 @@ class Mesh:
             f = pl.split(",")
             self.on_event("report", {
                 "id": src, "code": f[0] if f else "",
-                "lat": _float(f[1]) if len(f) > 1 else 0,
-                "lon": _float(f[2]) if len(f) > 2 else 0,
-                "team": f[3] if len(f) > 3 else "",
+                "team": f[1] if len(f) > 1 else "",
+                "lat": _float(f[2]) if len(f) > 2 else 0,
+                "lon": _float(f[3]) if len(f) > 3 else 0,
             })
             self._forward_if_needed(pkt)
 

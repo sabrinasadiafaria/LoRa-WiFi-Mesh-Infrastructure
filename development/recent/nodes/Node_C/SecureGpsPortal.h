@@ -182,10 +182,10 @@ static void sarGpsStartHttps() {
   conf.httpd.lru_purge_enable = true;
   conf.tls_handshake_timeout_ms = 30000;
   
-  // FIX: Run HTTPS on Core 0 (PRO_CPU) at low priority so the TLS handshake
-  // doesn't preempt the Arduino loop() on Core 1 and drop LoRa packets!
+  // FIX: Run HTTPS on Core 0 (PRO_CPU) so it doesn't block Arduino loop() on Core 1.
+  // We use the default priority (5) so the TLS handshake doesn't timeout
+  // and cause ERR_CONNECTION_RESET.
   conf.httpd.core_id = 0;
-  conf.httpd.task_priority = 1;
 
   Serial.printf("[secure-gps] starting HTTPS, free heap=%lu\n", (unsigned long)ESP.getFreeHeap());
   esp_err_t rc = httpd_ssl_start(&sarGpsHttpsServer, &conf);
