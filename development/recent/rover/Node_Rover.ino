@@ -211,7 +211,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 // ------------------------------- LoRa PHY ---------------------------------
 // MUST MATCH A/B/C AND THE PI EXACTLY - see the PHY box printed at boot.
 #define LORA_FREQ      433E6
-#define LORA_SF        9        // same as A/B/C - see their Phase 7 notes on
+#define LORA_SF        7        // same as A/B/C - see their Phase 7 notes on
                                 // why this is not SF9/SF8. Change it here
                                 // ONLY together with all three other sketches
                                 // and pi/sx1278.py.
@@ -278,7 +278,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define SEEN_CACHE_SIZE   32
 #define TX_QUEUE_DEPTH     6
 #define NMEA_BUF_LEN     100
-#define UI_PAGES           6    // one more than A/B/C: page 5 is ROVER status
+#define UI_PAGES           7    // one more than A/B/C: page 5 is ROVER status
 #define WDT_TIMEOUT_S     30
 #define SERIAL_BAUD   115200
 
@@ -2491,7 +2491,7 @@ void drawPage0() {
 
 void drawPage1() {
   char l[5][26];
-  snprintf(l[0], sizeof(l[0]), "-- LINKS --   %u up 2/6",
+  snprintf(l[0], sizeof(l[0]), "-- LINKS --   %u up 2/7",
            (unsigned)neighborActiveCount());
 
   uint8_t row = 1;
@@ -2515,7 +2515,7 @@ void drawPage1() {
 
 void drawPage2() {
   char l[5][26];
-  snprintf(l[0], sizeof(l[0]), "-- ROUTES --  %u   3/6",
+  snprintf(l[0], sizeof(l[0]), "-- ROUTES --  %u   3/7",
            (unsigned)routeValidCount());
 
   uint8_t row = 1;
@@ -2533,7 +2533,7 @@ void drawPage2() {
 
 void drawPage3() {
   char l[5][26];
-  snprintf(l[0], sizeof(l[0]), "-- POSITIONS --   4/6");
+  snprintf(l[0], sizeof(l[0]), "-- POSITIONS --   4/7");
 
   uint8_t row = 1;
   for (uint8_t i = 0; i < MAX_NEIGHBORS && row < 5; i++) {
@@ -2552,7 +2552,7 @@ void drawPage3() {
 
 void drawPage4() {
   char l[5][26];
-  snprintf(l[0], sizeof(l[0]), "-- GPS / TEAM --  5/6");
+  snprintf(l[0], sizeof(l[0]), "-- GPS / TEAM --  5/7");
 
   if (gpsSentences == 0)
     snprintf(l[1], sizeof(l[1]), "GPS SILENT - wiring!");
@@ -2585,7 +2585,7 @@ void drawPage4() {
 // ---- page 5: ROVER STATUS - new in Phase 8, AUTO_GPS block added Phase 9 ---
 void drawPage5() {
   char l[5][26];
-  snprintf(l[0], sizeof(l[0]), "-- ROVER --       6/6");
+  snprintf(l[0], sizeof(l[0]), "-- ROVER --       6/7");
   snprintf(l[1], sizeof(l[1]), "mode: %s%s",
            roverModeName(roverMode),
            (roverMode == ROVER_AUTOG && !targetSet) ? " (no tgt)" : "");
@@ -2641,6 +2641,28 @@ void drawSosScreen() {
   oledPush(l);
 }
 
+// ---- page 6: MESSAGE -----------------------------------------------------
+void drawPage6() {
+  char l[5][26];
+  snprintf(l[0], sizeof(l[0]), "-- MESSAGE --      7/7");
+  if (lastMsgTime == 0) {
+    snprintf(l[1], sizeof(l[1]), "No messages yet");
+    l[2][0] = l[3][0] = l[4][0] = '\0';
+  } else {
+    char ageStr[8];
+    fmtAge(millis() - lastMsgTime, ageStr, sizeof(ageStr));
+    snprintf(l[1], sizeof(l[1]), "From: %-4s   %s ago", lastMsgFrom, ageStr);
+    
+    char m1[22] = {0}, m2[22] = {0};
+    strncpy(m1, lastMsgText, 21);
+    if (strlen(lastMsgText) > 21) strncpy(m2, lastMsgText + 21, 21);
+    snprintf(l[2], sizeof(l[2]), "%s", m1);
+    snprintf(l[3], sizeof(l[3]), "%s", m2);
+    l[4][0] = '\0';
+  }
+  oledPush(l);
+}
+
 void drawUI() {
   if (sosAlert) { drawSosScreen(); return; }
   if      (uiPage == 1) drawPage1();
@@ -2648,6 +2670,7 @@ void drawUI() {
   else if (uiPage == 3) drawPage3();
   else if (uiPage == 4) drawPage4();
   else if (uiPage == 5) drawPage5();
+  else if (uiPage == 6) drawPage6();
   else                  drawPage0();
 }
 
@@ -3044,3 +3067,6 @@ void loop() {
   uint32_t dt = millis() - loopStartMs;
   if (dt > maxLoopMs) maxLoopMs = dt;
 }
+
+
+

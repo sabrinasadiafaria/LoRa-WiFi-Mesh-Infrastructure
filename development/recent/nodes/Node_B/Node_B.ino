@@ -218,7 +218,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define SEEN_CACHE_SIZE   32
 #define TX_QUEUE_DEPTH     6
 #define NMEA_BUF_LEN     100
-#define UI_PAGES           5
+#define UI_PAGES           6
 #define WDT_TIMEOUT_S     30       // transmits are bounded now, so this can be tight again
 #define SERIAL_BAUD   115200
 
@@ -2429,10 +2429,10 @@ void drawPage0() {
   uint8_t src = locBest(lat, lon, ageMs);
 
 #if ENABLE_PORTAL
-  snprintf(l[0], sizeof(l[0]), "NODE %s  SF%d  w%d  1/5",
+  snprintf(l[0], sizeof(l[0]), "NODE %s  SF%d  w%d  1/6",
            MY_ID, (int)LORA_SF, (int)WiFi.softAPgetStationNum());
 #else
-  snprintf(l[0], sizeof(l[0]), "NODE %s  SF%d      1/5", MY_ID, (int)LORA_SF);
+  snprintf(l[0], sizeof(l[0]), "NODE %s  SF%d      1/6", MY_ID, (int)LORA_SF);
 #endif
 
   snprintf(l[1], sizeof(l[1]), "Peers %u  Routes %u%s",
@@ -2461,7 +2461,7 @@ void drawPage0() {
 // ---- page 1: LINKS - the page to watch during a range test ---------------
 void drawPage1() {
   char l[5][26];
-  snprintf(l[0], sizeof(l[0]), "-- LINKS --   %u up 2/5",
+  snprintf(l[0], sizeof(l[0]), "-- LINKS --   %u up 2/6",
            (unsigned)neighborActiveCount());
 
   uint8_t row = 1;
@@ -2486,7 +2486,7 @@ void drawPage1() {
 // ---- page 2: ROUTES ------------------------------------------------------
 void drawPage2() {
   char l[5][26];
-  snprintf(l[0], sizeof(l[0]), "-- ROUTES --  %u   3/5",
+  snprintf(l[0], sizeof(l[0]), "-- ROUTES --  %u   3/6",
            (unsigned)routeValidCount());
 
   uint8_t row = 1;
@@ -2505,7 +2505,7 @@ void drawPage2() {
 // ---- page 3: POSITIONS ---------------------------------------------------
 void drawPage3() {
   char l[5][26];
-  snprintf(l[0], sizeof(l[0]), "-- POSITIONS --   4/5");
+  snprintf(l[0], sizeof(l[0]), "-- POSITIONS --   4/6");
 
   uint8_t row = 1;
   for (uint8_t i = 0; i < MAX_NEIGHBORS && row < 5; i++) {
@@ -2525,7 +2525,7 @@ void drawPage3() {
 // ---- page 4: GPS health + team status ------------------------------------
 void drawPage4() {
   char l[5][26];
-  snprintf(l[0], sizeof(l[0]), "-- GPS / TEAM --  5/5");
+  snprintf(l[0], sizeof(l[0]), "-- GPS / TEAM --  5/6");
 
   if (gpsSentences == 0)
     snprintf(l[1], sizeof(l[1]), "GPS SILENT - wiring!");
@@ -2578,12 +2578,36 @@ void drawSosScreen() {
 }
 
 // The display cycles through the pages every UI_PAGE_MS; 'p' skips ahead.
+// ---- page 5: MESSAGE -----------------------------------------------------
+void drawPage5() {
+  char l[5][26];
+  snprintf(l[0], sizeof(l[0]), "-- MESSAGE --      6/6");
+  if (lastMsgTime == 0) {
+    snprintf(l[1], sizeof(l[1]), "No messages yet");
+    l[2][0] = l[3][0] = l[4][0] = '\0';
+  } else {
+    char ageStr[8];
+    fmtAge(millis() - lastMsgTime, ageStr, sizeof(ageStr));
+    snprintf(l[1], sizeof(l[1]), "From: %-4s   %s ago", lastMsgFrom, ageStr);
+    
+    // Split lastMsgText (up to 40 chars) across lines 2 and 3
+    char m1[22] = {0}, m2[22] = {0};
+    strncpy(m1, lastMsgText, 21);
+    if (strlen(lastMsgText) > 21) strncpy(m2, lastMsgText + 21, 21);
+    snprintf(l[2], sizeof(l[2]), "%s", m1);
+    snprintf(l[3], sizeof(l[3]), "%s", m2);
+    l[4][0] = '\0';
+  }
+  oledPush(l);
+}
+
 void drawUI() {
   if (sosAlert) { drawSosScreen(); return; }   // takeover wins over every page
   if      (uiPage == 1) drawPage1();
   else if (uiPage == 2) drawPage2();
   else if (uiPage == 3) drawPage3();
   else if (uiPage == 4) drawPage4();
+  else if (uiPage == 5) drawPage5();
   else                  drawPage0();
 }
 
@@ -2975,4 +2999,6 @@ void loop() {
   uint32_t dt = millis() - loopStartMs;
   if (dt > maxLoopMs) maxLoopMs = dt;
 }
+
+
 
