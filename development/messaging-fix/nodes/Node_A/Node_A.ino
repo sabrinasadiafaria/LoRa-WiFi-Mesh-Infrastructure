@@ -78,7 +78,6 @@
 #include <U8g2lib.h>
 #include <WiFi.h>
 #include <WebServer.h>
-#include "SecureGpsPortal.h"
 #include <DNSServer.h>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
@@ -1790,14 +1789,12 @@ void portalBegin() {
 
   server.begin();
   Serial.printf("[portal] AP \"%s\" up at %s\n", AP_SSID, apIP.toString().c_str());
-  sarGpsStartHttps();
 }
 
 void portalService() {
   if (!portalOk) return;
   dns.processNextRequest();
   server.handleClient();
-  sarGpsHttpsService();
 }
 #endif  // ENABLE_PORTAL
 

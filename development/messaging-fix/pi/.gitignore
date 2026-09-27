@@ -1,9 +1,0 @@
-venv/
-__pycache__/
-*.pyc
-sar.db
-sar.db-journal
-dashboard/tiles/
-dashboard/leaflet/*.js
-dashboard/leaflet/*.css
-dashboard/leaflet/images/
