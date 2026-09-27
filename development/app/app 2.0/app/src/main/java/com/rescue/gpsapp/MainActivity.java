@@ -25,7 +25,12 @@ import com.google.android.gms.location.Priority;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.util.Locale;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.BatteryManager;
+import android.widget.Toast;
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "SAR_GPS_APP_V2";
@@ -34,11 +39,15 @@ public class MainActivity extends AppCompatActivity {
 
     private TextView tvStatus;
     private TextView tvLocation;
+    private TextView tvStats;
     private Button btnToggle;
+    private Button btnSos, btnNeedHelp, btnInjured, btnFoundVictim, btnSafe;
 
     private FusedLocationProviderClient fusedLocationClient;
     private LocationCallback locationCallback;
     private boolean isSharing = false;
+    private int packetCount = 0;
+    private String lastTransmission = "--";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -47,7 +56,28 @@ public class MainActivity extends AppCompatActivity {
 
         tvStatus = findViewById(R.id.tvStatus);
         tvLocation = findViewById(R.id.tvLocation);
+        tvStats = findViewById(R.id.tvStats);
         btnToggle = findViewById(R.id.btnToggle);
+
+        btnSos = findViewById(R.id.btnSos);
+        btnNeedHelp = findViewById(R.id.btnNeedHelp);
+        btnInjured = findViewById(R.id.btnInjured);
+        btnFoundVictim = findViewById(R.id.btnFoundVictim);
+        btnSafe = findViewById(R.id.btnSafe);
+
+        btnSos.setOnLongClickListener(v -> {
+            sendMessageToNode("/api/sos", null);
+            return true;
+        });
+        
+        btnSos.setOnClickListener(v -> {
+            Toast.makeText(this, "Hold to activate SOS", Toast.LENGTH_SHORT).show();
+        });
+
+        btnNeedHelp.setOnClickListener(v -> sendTextMsg("NEED HELP"));
+        btnInjured.setOnClickListener(v -> sendTextMsg("INJURED"));
+        btnFoundVictim.setOnClickListener(v -> sendTextMsg("FOUND VICTIM"));
+        btnSafe.setOnClickListener(v -> sendTextMsg("SAFE"));
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
@@ -163,11 +193,16 @@ public class MainActivity extends AppCompatActivity {
                     byte[] buffer = new byte[1024];
                     in.read(buffer);
                     in.close();
+
+                    packetCount++;
+                    java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("HH:mm:ss", Locale.US);
+                    lastTransmission = sdf.format(new java.util.Date());
                 }
 
                 conn.disconnect();
 
                 new Handler(Looper.getMainLooper()).post(() -> {
+                    updateStats();
                     if (isSharing) {
                         tvStatus.setText(resultText);
                     }
@@ -175,9 +210,78 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception e) {
                 Log.e(TAG, "Failed to send GPS", e);
                 new Handler(Looper.getMainLooper()).post(() -> {
+                    updateStats();
                     if (isSharing) {
                         tvStatus.setText("● GPS sharing active\n● Node disconnected");
                     }
+                });
+            }
+        }).start();
+    }
+
+    private int getBatteryPercentage() {
+        IntentFilter iFilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        Intent batteryStatus = registerReceiver(null, iFilter);
+        if (batteryStatus != null) {
+            int level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+            int scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+            if (level != -1 && scale != -1) {
+                return (int) ((level / (float) scale) * 100);
+            }
+        }
+        return -1;
+    }
+
+    private void updateStats() {
+        int bat = getBatteryPercentage();
+        String batStr = (bat >= 0) ? bat + "%" : "--";
+        if (tvStats != null) {
+            tvStats.setText(String.format(Locale.US, "Packets: %d\nLast: %s\nBattery: %s", packetCount, lastTransmission, batStr));
+        }
+    }
+
+    private void sendTextMsg(String text) {
+        try {
+            String query = "text=" + URLEncoder.encode(text, "UTF-8");
+            sendMessageToNode("/api/msg", query);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void sendMessageToNode(String path, String query) {
+        new Thread(() -> {
+            try {
+                String urlString = "http://192.168.4.1" + path + (query != null ? "?" + query : "");
+                URL url = new URL(urlString);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(3000);
+                conn.setReadTimeout(3000);
+
+                int responseCode = conn.getResponseCode();
+                if (responseCode == 200) {
+                    InputStream in = conn.getInputStream();
+                    byte[] buffer = new byte[1024];
+                    in.read(buffer);
+                    in.close();
+                }
+                conn.disconnect();
+                
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    String msg = "SOS";
+                    if (query != null) {
+                        try {
+                            msg = java.net.URLDecoder.decode(query.replace("text=",""), "UTF-8");
+                        } catch (Exception ex) {
+                            msg = "Message";
+                        }
+                    }
+                    Toast.makeText(MainActivity.this, "Sent: " + msg, Toast.LENGTH_SHORT).show();
+                });
+            } catch (Exception e) {
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    Toast.makeText(MainActivity.this, "Failed to send to Node", Toast.LENGTH_SHORT).show();
                 });
             }
         }).start();
