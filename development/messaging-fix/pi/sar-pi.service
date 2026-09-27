@@ -1,0 +1,33 @@
+# SAR Command Centre - run the Pi mesh node + dashboard on boot.
+#
+# Easiest path: run  bash install.sh --enable   from development/pi/.
+# It sed-substitutes User, WorkingDirectory and ExecStart with the real
+# values from your Pi (current user, repo path) and installs the unit.
+#
+# If you'd rather do it by hand:
+#   1. edit the three lines marked <TEMPLATE> below
+#   2. sudo cp sar-pi.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now sar-pi
+#   5. journalctl -u sar-pi -f
+#
+# Day-to-day updates from upstream:
+#   bash update.sh
+#
+# IMPORTANT: sudo systemctl stop sar-pi  before running main.py by hand -
+# two instances fight over the same GPIO/SPI and the loser hangs.
+
+[Unit]
+Description=SAR LoRa Mesh Command Centre
+After=network.target
+
+[Service]
+Type=simple
+User=pi                                      # <TEMPLATE> your pi username
+WorkingDirectory=/home/pi/LoRa-WiFi-Mesh-Infrastructure/development/pi   # <TEMPLATE>
+ExecStart=/home/pi/LoRa-WiFi-Mesh-Infrastructure/development/pi/venv/bin/python3 main.py   # <TEMPLATE>
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
