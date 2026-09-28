@@ -363,6 +363,9 @@ class Mesh:
                     "battery": _int(f[2], -1),
                     "dist_m": _int(f[3], -1) if len(f) > 3 else -1,
                     "heading_err": _int(f[4], -999) if len(f) > 4 else -999,
+                    "tempC": float(f[5]) if len(f) > 5 else -999.0,
+                    "hum": float(f[6]) if len(f) > 6 else -999.0,
+                    "gas": _int(f[7], -1) if len(f) > 7 else -1,
                     "rssi": rssi,
                 })
             # ROVER is in CONSUMED_NO_FWD - A/B/C already relay it hop by hop

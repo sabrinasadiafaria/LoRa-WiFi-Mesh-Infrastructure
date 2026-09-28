@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS raw_log (
     ts REAL, kind TEXT, data TEXT
 );
 CREATE TABLE IF NOT EXISTS rover_status (
-    id TEXT PRIMARY KEY, mode TEXT, obstacle_cm INTEGER, battery_pct INTEGER, ts REAL
+    id TEXT PRIMARY KEY, mode TEXT, obstacle_cm INTEGER, battery_pct INTEGER, tempC REAL, hum REAL, gas INTEGER, ts REAL
 );
 """
 
@@ -50,6 +50,12 @@ class DB:
         self._lock = threading.Lock()
         self._c = sqlite3.connect(path, check_same_thread=False)
         self._c.executescript(_SCHEMA)
+        try:
+            self._c.execute("ALTER TABLE rover_status ADD COLUMN tempC REAL")
+            self._c.execute("ALTER TABLE rover_status ADD COLUMN hum REAL")
+            self._c.execute("ALTER TABLE rover_status ADD COLUMN gas INTEGER")
+        except:
+            pass # Columns already exist
         self._c.commit()
 
     def _run(self, sql, args=()):
@@ -105,7 +111,7 @@ class DB:
         self._run("INSERT INTO raw_log(ts,kind,data) VALUES(?,?,?)",
                   (time.time(), kind, str(data)[:400]))
 
-    def rover(self, nid, mode, obstacle_cm, battery_pct):
+    def rover(self, nid, mode, obstacle_cm, battery_pct, tempC=None, hum=None, gas=None):
         self._run(
             """INSERT INTO rover_status(id,mode,obstacle_cm,battery_pct,ts)
                VALUES(?,?,?,?,?)
@@ -158,9 +164,9 @@ class DB:
                       for r in self._c.execute(
                           "SELECT id,team,state,ts FROM team_status ORDER BY id")]
 
-            rover = [dict(zip(("id", "mode", "obstacle_cm", "battery_pct", "ts"), r))
+            rover = [dict(zip(("id", "mode", "obstacle_cm", "battery_pct", "tempC", "hum", "gas", "ts"), r))
                      for r in self._c.execute(
-                         "SELECT id,mode,obstacle_cm,battery_pct,ts FROM rover_status")]
+                         "SELECT id,mode,obstacle_cm,battery_pct,tempC,hum,gas,ts FROM rover_status")]
 
             return {"nodes": nodes, "positions": latest, "trails": trails,
                     "sos": sos, "messages": msgs, "reports": reports, "status": status,

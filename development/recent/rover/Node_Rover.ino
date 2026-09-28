@@ -100,6 +100,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <DHT.h>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
 #include <math.h>
@@ -153,7 +154,14 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define I2C_SCL         9
 
 #define PIN_SOS_BUTTON 15    // also doubles as a physical motor E-STOP here
-#define PIN_ENTROPY     1    // ADC1_CH0, left unwired so it floats -> seed
+#define PIN_ENTROPY     1    // ADC1_CH0
+
+// ---- environmental sensors ------------------------------------------------
+#define PIN_DHT        47
+#define DHTTYPE        DHT11
+#define PIN_MQ2        1     // ADC1_CH0 (Shared with PIN_ENTROPY)
+
+DHT dht(PIN_DHT, DHTTYPE);
 
 #define GPS_RX_PIN     17    // Serial2 RX  <- GPS TX
 #define GPS_TX_PIN     18    // Serial2 TX  -> GPS RX
@@ -278,7 +286,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define SEEN_CACHE_SIZE   32
 #define TX_QUEUE_DEPTH     6
 #define NMEA_BUF_LEN     100
-#define UI_PAGES           7    // one more than A/B/C: page 5 is ROVER status
+#define UI_PAGES           8    // added page 7 for ENV status
 #define WDT_TIMEOUT_S     30
 #define SERIAL_BAUD   115200
 
@@ -1840,9 +1848,18 @@ void sendRoverTelemetry() {
   // check `len(f) >= 3` to read the first three fields.
   int distM = (targetSet && lastDistMeters >= 0.0) ? (int)lastDistMeters : -1;
   int hErr  = (isnan(lastHeadingErrDeg)) ? -999 : (int)lastHeadingErrDeg;
-  char payload[64];
-  snprintf(payload, sizeof(payload), "%s,%d,%d,%d,%d",
-           roverModeName(roverMode), ultrasonicCm, batt, distM, hErr);
+  
+  float tempC = dht.readTemperature();
+  float hum = dht.readHumidity();
+  int gas = analogRead(PIN_MQ2);
+  
+  if (isnan(tempC)) tempC = -999.0;
+  if (isnan(hum)) hum = -999.0;
+
+  char payload[96];
+  snprintf(payload, sizeof(payload), "%s,%d,%d,%d,%d,%.1f,%.1f,%d",
+           roverModeName(roverMode), ultrasonicCm, batt, distM, hErr,
+           tempC, hum, gas);
 
   char frame[MAX_PACKET_LEN];
   if (pktBuild(frame, sizeof(frame), "ROVER", MY_ID, "*", nextMsgId(), MAX_HOPS, payload)
@@ -2663,6 +2680,26 @@ void drawPage6() {
   oledPush(l);
 }
 
+void drawPage7() {
+  char l[5][26];
+  snprintf(l[0], sizeof(l[0]), "-- ENV SENSORS --  8/8");
+  
+  float tempC = dht.readTemperature();
+  float hum = dht.readHumidity();
+  int gas = analogRead(PIN_MQ2);
+  
+  if (isnan(tempC)) snprintf(l[1], sizeof(l[1]), "Temp: Error");
+  else snprintf(l[1], sizeof(l[1]), "Temp: %.1f C", tempC);
+  
+  if (isnan(hum)) snprintf(l[2], sizeof(l[2]), "Hum: Error");
+  else snprintf(l[2], sizeof(l[2]), "Hum: %.1f %%", hum);
+  
+  snprintf(l[3], sizeof(l[3]), "Gas (MQ2): %d", gas);
+  l[4][0] = '\0';
+  
+  oledPush(l);
+}
+
 void drawUI() {
   if (sosAlert) { drawSosScreen(); return; }
   if      (uiPage == 1) drawPage1();
@@ -2671,6 +2708,7 @@ void drawUI() {
   else if (uiPage == 4) drawPage4();
   else if (uiPage == 5) drawPage5();
   else if (uiPage == 6) drawPage6();
+  else if (uiPage == 7) drawPage7();
   else                  drawPage0();
 }
 
@@ -2906,6 +2944,7 @@ void setup() {
   motorInit();          // FIRST - drives every motor pin low before anything
   ultrasonicInit();     // else runs, so a reset cannot leave the wheels on
   servoInit();
+  dht.begin();
 
   randomSeed(((uint32_t)analogRead(PIN_ENTROPY) << 16) ^ micros());
 

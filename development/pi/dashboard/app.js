@@ -464,6 +464,9 @@ function renderRover(roverList, now) {
   const valBatt = document.getElementById('r-val-batt');
   const valObs  = document.getElementById('r-val-obs');
   const valAge  = document.getElementById('r-val-age');
+  const valTemp = document.getElementById('r-val-temp');
+  const valHum  = document.getElementById('r-val-hum');
+  const valGas  = document.getElementById('r-val-gas');
 
   if (valMode) valMode.textContent = r.mode || 'MANUAL';
   if (valBatt) valBatt.textContent = `${r.battery_pct}%`;
