@@ -472,9 +472,9 @@ function renderRover(roverList, now) {
   if (valBatt) valBatt.textContent = `${r.battery_pct}%`;
   if (valObs)  valObs.textContent  = `${r.obstacle_cm} cm`;
   if (valAge)  valAge.textContent  = `${fmtAge(ageS)} ago`;
-  if (valTemp) valTemp.textContent = r.tempC !== -999.0 ? `${r.tempC} C` : '-- C';
-  if (valHum)  valHum.textContent  = r.hum !== -999.0 ? `${r.hum} %` : '-- %';
-  if (valGas)  valGas.textContent  = r.gas !== -1 ? r.gas : '--';
+  if (valTemp) valTemp.textContent = (r.tempC !== undefined && r.tempC !== -999.0) ? `${r.tempC} C` : '-- C';
+  if (valHum)  valHum.textContent  = (r.hum !== undefined && r.hum !== -999.0) ? `${r.hum} %` : '-- %';
+  if (valGas)  valGas.textContent  = (r.gas !== undefined && r.gas !== -1) ? r.gas : '--';
 }
 
 // ===================================================================

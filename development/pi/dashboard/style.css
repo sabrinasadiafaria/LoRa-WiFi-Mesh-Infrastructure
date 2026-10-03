@@ -38,7 +38,7 @@ button:active { transform: scale(0.95); }
 .topbar {
   position: sticky; top: 0; z-index: 1000;
   min-height: 64px;
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
   padding: 12px 24px;
   background: rgba(15, 23, 42, 0.7);
   backdrop-filter: blur(16px);
