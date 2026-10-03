@@ -113,12 +113,16 @@ class DB:
 
     def rover(self, nid, mode, obstacle_cm, battery_pct, tempC=None, hum=None, gas=None):
         self._run(
-            """INSERT INTO rover_status(id,mode,obstacle_cm,battery_pct,ts)
-               VALUES(?,?,?,?,?)
+            """INSERT INTO rover_status(id,mode,obstacle_cm,battery_pct,tempC,hum,gas,ts)
+               VALUES(?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET mode=excluded.mode,
                  obstacle_cm=excluded.obstacle_cm,
-                 battery_pct=excluded.battery_pct, ts=excluded.ts""",
-            (nid, mode, obstacle_cm, battery_pct, time.time()))
+                 battery_pct=excluded.battery_pct,
+                 tempC=excluded.tempC,
+                 hum=excluded.hum,
+                 gas=excluded.gas,
+                 ts=excluded.ts""",
+            (nid, mode, obstacle_cm, battery_pct, tempC, hum, gas, time.time()))
 
     # ---- readers for the dashboard --------------------------------
     def state(self):
