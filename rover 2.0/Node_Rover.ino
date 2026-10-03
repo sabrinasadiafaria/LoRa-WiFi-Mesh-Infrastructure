@@ -160,7 +160,6 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define PIN_DHT        47
 #define DHTTYPE        DHT11
 #define PIN_MQ2_A0     1     // ADC1_CH0
-#define PIN_MQ2_D0     3     // GPO3
 
 DHT dht(PIN_DHT, DHTTYPE);
 
@@ -2942,7 +2941,6 @@ void setup() {
   delay(200);
 
   pinMode(PIN_SOS_BUTTON, INPUT_PULLUP);
-  pinMode(PIN_MQ2_D0, INPUT);
   motorInit();          // FIRST - drives every motor pin low before anything
   ultrasonicInit();     // else runs, so a reset cannot leave the wheels on
   servoInit();
@@ -3108,6 +3106,8 @@ void loop() {
   uint32_t dt = millis() - loopStartMs;
   if (dt > maxLoopMs) maxLoopMs = dt;
 }
+
+
 
 
 
