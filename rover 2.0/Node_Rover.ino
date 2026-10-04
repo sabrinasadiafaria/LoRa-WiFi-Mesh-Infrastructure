@@ -157,7 +157,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define PIN_ENTROPY     1    // ADC1_CH0
 
 // ---- environmental sensors ------------------------------------------------
-#define PIN_DHT        47
+#define PIN_DHT        2
 #define DHTTYPE        DHT11
 #define PIN_MQ2_A0     1     // ADC1_CH0
 
