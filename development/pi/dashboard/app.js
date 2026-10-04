@@ -671,7 +671,7 @@ async function refresh() {
 refresh();
 setInterval(refresh, 5000);
 
-// SSE Live Event Stream
+let refreshTimer = null;
 const es = new EventSource('/api/events');
 es.onmessage = e => {
   try {
@@ -681,6 +681,11 @@ es.onmessage = e => {
     } else if (ev.kind === 'message') {
       showToast(`💬 New message from ${ev.data.src}`, 'info');
     }
-    refresh();
+    if (!refreshTimer) {
+      refreshTimer = setTimeout(() => {
+        refresh();
+        refreshTimer = null;
+      }, 300);
+    }
   } catch (err) {}
 };
