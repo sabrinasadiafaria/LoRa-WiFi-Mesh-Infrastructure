@@ -1859,6 +1859,16 @@ void sendRoverTelemetry() {
   if (isnan(tempC)) tempC = -999.0;
   if (isnan(hum)) hum = -999.0;
 
+  // Debug: print env readings every telemetry cycle so you can verify
+  // DHT11 in Serial Monitor without waiting for the dashboard.
+  // "Error" means isnan() was true before the -999 clamp above.
+  if (tempC == -999.0 || hum == -999.0)
+    Serial.printf("[env] DHT11 read FAILED - temp=%.1f hum=%.1f gas=%d "
+                  "(check GPIO%d wiring / 1k pull-up)\n", tempC, hum, gas, PIN_DHT);
+  else
+    Serial.printf("[env] temp=%.1fC  hum=%.1f%%  gas=%d (MQ2 raw)\n",
+                  tempC, hum, gas);
+
   char payload[96];
   snprintf(payload, sizeof(payload), "%s,%d,%d,%d,%d,%.1f,%.1f,%d",
            roverModeName(roverMode), ultrasonicCm, batt, distM, hErr,
@@ -2902,6 +2912,24 @@ void handleSerial() {
   } else if (c == 'o') {
     roverManualDrive("STOP");
 
+  } else if (c == 'e') {
+    // Instant on-demand DHT11 read - press 'e' in Serial Monitor to check
+    // sensor without waiting for the next 10s telemetry cycle.
+    float eT = dht.readTemperature();
+    float eH = dht.readHumidity();
+    int   eG = analogRead(PIN_MQ2_A0);
+    Serial.println("[env] --- DHT11 instant read ---");
+    if (isnan(eT))
+      Serial.printf("[env] Temp:    FAILED (NaN) - check GPIO%d + pull-up\n", PIN_DHT);
+    else
+      Serial.printf("[env] Temp:    %.1f C\n", eT);
+    if (isnan(eH))
+      Serial.printf("[env] Humidity: FAILED (NaN) - check GPIO%d + pull-up\n", PIN_DHT);
+    else
+      Serial.printf("[env] Humidity: %.1f %%\n", eH);
+    Serial.printf("[env] Gas(MQ2): %d  (raw ADC, GPIO%d)\n", eG, PIN_MQ2_A0);
+    Serial.println("[env] ------------------------------");
+
   } else if (c == 'u') {
     Serial.printf("[rover] ultrasonic: %dcm  (misses=%u%s)\n",
                   ultrasonicCm, (unsigned)ultrasonicMisses,
@@ -2926,6 +2954,7 @@ void handleSerial() {
     Serial.println("          t=toggle repeat send  p=next OLED page  x=bad frame");
     Serial.println("  ROVER:  m=cycle mode  i/k/j/l=fwd/back/left/right  o=stop");
     Serial.println("          u=ultrasonic reading   w=sweep the servo");
+    Serial.println("          e=instant DHT11+MQ2 env read  <-- NEW");
     Serial.println("  SOS/E-STOP:  S=trigger SOS  C=clear alert  (button always E-STOPs)");
     Serial.println("  report 1=VictimFound 2=Medical 3=Blocked 4=Danger");
     Serial.println("  status 5=Available 6=Searching 7=NeedAssist 8=Emergency");
