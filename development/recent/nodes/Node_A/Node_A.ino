@@ -129,7 +129,7 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
                                 // exactly like "nothing connects to anything".
 #define LORA_BW        125000L
 #define LORA_CR        5
-#define LORA_TXPOWER   17
+#define LORA_TXPOWER   7
 #define LORA_SYNCWORD  0x2A
 #define LORA_PREAMBLE  8
 

@@ -47,7 +47,7 @@ FREQ_HZ = 433_000_000
 SF = 7                                 # MUST match LORA_SF in the node sketches
 BW_HZ = 125_000
 CR_DENOM = 5                          # 4/5
-TX_POWER_DBM = 17
+TX_POWER_DBM = 7
 SYNC_WORD = 0x2A
 PREAMBLE = 8
 

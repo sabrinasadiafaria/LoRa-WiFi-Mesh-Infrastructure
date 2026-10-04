@@ -225,7 +225,7 @@ DHT dht(PIN_DHT, DHTTYPE);
                                 // and pi/sx1278.py.
 #define LORA_BW        125000L
 #define LORA_CR        5
-#define LORA_TXPOWER   17
+#define LORA_TXPOWER   7
 #define LORA_SYNCWORD  0x2A
 #define LORA_PREAMBLE  8
 

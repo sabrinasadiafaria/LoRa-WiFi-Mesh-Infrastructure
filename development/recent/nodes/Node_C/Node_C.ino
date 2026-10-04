@@ -124,7 +124,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
                                 // exactly like "nothing connects to anything".
 #define LORA_BW        125000L
 #define LORA_CR        5
-#define LORA_TXPOWER   17
+#define LORA_TXPOWER   7
 #define LORA_SYNCWORD  0x2A
 #define LORA_PREAMBLE  8
 
