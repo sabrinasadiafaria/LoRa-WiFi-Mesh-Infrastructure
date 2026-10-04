@@ -49,8 +49,6 @@ class DB:
         self._path = path
         self._lock = threading.Lock()
         self._c = sqlite3.connect(path, check_same_thread=False)
-        self._c.execute("PRAGMA journal_mode=WAL;")
-        self._c.execute("PRAGMA synchronous=NORMAL;")
         self._c.executescript(_SCHEMA)
         for col, typ in [("tempC", "REAL"), ("hum", "REAL"), ("gas", "INTEGER")]:
             try:
