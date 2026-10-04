@@ -157,9 +157,12 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define PIN_ENTROPY     1    // ADC1_CH0
 
 // ---- environmental sensors ------------------------------------------------
-#define PIN_DHT        2
+// PIN_DHT was 2, which conflicted with PIN_BATTERY_ADC (also 2). Moved to 3.
+// PIN_MQ2_A0 was 1, which conflicted with PIN_ENTROPY (also 1). Moved to 2.
+// GPIO 3 and 2 are both ADC1 (safe for digital and analog on S3).
+#define PIN_DHT        3     // was 2 - moved off PIN_BATTERY_ADC
 #define DHTTYPE        DHT11
-#define PIN_MQ2_A0     1     // ADC1_CH0
+#define PIN_MQ2_A0     2     // ADC1_CH1 - was 1 (conflicted with PIN_ENTROPY)
 
 DHT dht(PIN_DHT, DHTTYPE);
 
