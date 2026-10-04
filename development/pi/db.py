@@ -52,12 +52,11 @@ class DB:
         self._c.execute("PRAGMA journal_mode=WAL;")
         self._c.execute("PRAGMA synchronous=NORMAL;")
         self._c.executescript(_SCHEMA)
-        try:
-            self._c.execute("ALTER TABLE rover_status ADD COLUMN tempC REAL")
-            self._c.execute("ALTER TABLE rover_status ADD COLUMN hum REAL")
-            self._c.execute("ALTER TABLE rover_status ADD COLUMN gas INTEGER")
-        except:
-            pass # Columns already exist
+        for col, typ in [("tempC", "REAL"), ("hum", "REAL"), ("gas", "INTEGER")]:
+            try:
+                self._c.execute(f"ALTER TABLE rover_status ADD COLUMN {col} {typ}")
+            except:
+                pass
         self._c.commit()
 
     def _run(self, sql, args=()):
